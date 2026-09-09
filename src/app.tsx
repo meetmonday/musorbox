@@ -8,6 +8,7 @@ import type { UserContext } from "./core/middleware";
 import topicsRoutes from "./topics/routes";
 import authRoutes from "./auth/routes";
 import forumRoutes from "./forum/routes";
+import votesRoutes from "./votes/routes";
 
 type AppEnv = {
   Variables: UserContext;
@@ -25,6 +26,7 @@ app.use("/avatars/*", serveStatic({ root: "./public" }));
 app.route("/", topicsRoutes);
 app.route("/", authRoutes);
 app.route("/", forumRoutes);
+app.route("/", votesRoutes);
 
 app.all("*", (c) => c.text("Not found", 404));
 
