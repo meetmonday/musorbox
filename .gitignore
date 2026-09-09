@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Databases
+*.db
+*.db.sqlite
+*.sqlite
+*.db-wal
+*.db-shm
+trashbox.db
+
+# Archived pages (outside repo)
+dumps
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+bun-debug.log*
+
+# Uploads
+public/avatars/uploads/
+uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Coverage
+coverage/

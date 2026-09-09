@@ -1,0 +1,29 @@
+{
+  "name": "trashbox",
+  "module": "src/app.tsx",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/app.tsx",
+    "start": "bun run src/app.tsx",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "typecheck": "tsc --noEmit",
+    "seed": "bun run src/core/seed.ts"
+  },
+  "devDependencies": {
+    "@libsql/client": "^0.18.0",
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.10"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.7"
+  }
+}
