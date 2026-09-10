@@ -1,5 +1,5 @@
 import type { FC } from "hono/jsx";
-import { Header, type LayoutUser } from "./header";
+import { Header, LogoMenu, type LayoutUser } from "./header";
 import { Footer } from "./footer";
 import { config } from "../core/config";
 import { FeaturedCarousel } from "../topics/components";
@@ -56,6 +56,7 @@ export const Layout: FC<LayoutProps> = ({
       <body>
         <Header user={user} />
         <div class="div_layout">
+          <LogoMenu />
           {featured}
           {children}
           <div class="div_bottom_spacer" style="height:30px"> </div>

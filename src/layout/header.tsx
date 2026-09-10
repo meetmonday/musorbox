@@ -65,6 +65,78 @@ export const SearchForm: FC = () => (
   </form>
 );
 
+export const LogoMenu: FC = () => (
+  <>
+    <div class="div_table">
+      <div class="div_row">
+        <div class="div_cell">
+          <LogoHeader />
+        </div>
+        <div class="div_cell" id="div_menu_page">
+          <div id="div_top_menu_simple">
+            <div class="div_top_menu_b1_1 ad3">
+              <div class="div_top_menu_b2">
+                <h3>
+                  <a href="/public/progs/" class="first">Программы</a>
+                </h3>
+                <h3>
+                  <a href="/public/games/">Игры</a>
+                </h3>
+                <h3>
+                  <a href="/public/themes/">Темы</a>
+                </h3>
+              </div>
+              <div class="div_top_menu_b2">
+                <h3>
+                  <a href="/public/b_news/" class="first">Новости</a>
+                </h3>
+                <h3>
+                  <a href="/public/b_text/">Статьи</a>
+                </h3>
+                <h3>
+                  <a href="/public/reviews/">Обзоры</a>
+                </h3>
+                <h3>
+                  <a href="/public/b_questions/">Форум</a>
+                </h3>
+              </div>
+            </div>
+            <div class="div_top_menu_b1_2 ad3">
+              <div class="div_top_menu_b2">
+                <h3>
+                  <a href="/public/users/" class="first">Конкурсы</a>
+                </h3>
+                <h3>
+                  <a href="/public/trashcast/">Трешкаст</a>
+                </h3>
+              </div>
+              <div class="div_top_menu_b2">
+                <h3>
+                  <a href="/public/help/" class="first">Помощь</a>
+                </h3>
+                <h3>
+                  <a href="/public/circles/">Колонки</a>
+                </h3>
+                <h3>
+                  <a href="/feed_topics/1/">RSS</a>
+                </h3>
+              </div>
+            </div>
+            <noindex>
+              <a href="/new_topic/" rel="nofollow" class="h_new_topic3 blue">
+                Добавить&nbsp;топик
+              </a>
+            </noindex>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="clear">
+      {" "}
+    </div>
+  </>
+);
+
 export const Header: FC<{ user: LayoutUser }> = ({ user }) => (
   <>
     <div class="div_top_user_menu white">
@@ -153,76 +225,6 @@ export const Header: FC<{ user: LayoutUser }> = ({ user }) => (
             </div>
           </div>
         </div>
-      </div>
-    </div>
-
-    <div class="div_layout">
-      <div class="div_table">
-        <div class="div_row">
-          <div class="div_cell">
-            <LogoHeader />
-          </div>
-          <div class="div_cell" id="div_menu_page">
-            <div id="div_top_menu_simple">
-              <div class="div_top_menu_b1_1 ad3">
-                <div class="div_top_menu_b2">
-                  <h3>
-                    <a href="/public/progs/" class="first">Программы</a>
-                  </h3>
-                  <h3>
-                    <a href="/public/games/">Игры</a>
-                  </h3>
-                  <h3>
-                    <a href="/public/themes/">Темы</a>
-                  </h3>
-                </div>
-                <div class="div_top_menu_b2">
-                  <h3>
-                    <a href="/public/b_news/" class="first">Новости</a>
-                  </h3>
-                  <h3>
-                    <a href="/public/b_text/">Статьи</a>
-                  </h3>
-                  <h3>
-                    <a href="/public/reviews/">Обзоры</a>
-                  </h3>
-                  <h3>
-                    <a href="/public/b_questions/">Форум</a>
-                  </h3>
-                </div>
-              </div>
-              <div class="div_top_menu_b1_2 ad3">
-                <div class="div_top_menu_b2">
-                  <h3>
-                    <a href="/public/users/" class="first">Конкурсы</a>
-                  </h3>
-                  <h3>
-                    <a href="/public/trashcast/">Трешкаст</a>
-                  </h3>
-                </div>
-                <div class="div_top_menu_b2">
-                  <h3>
-                    <a href="/public/help/" class="first">Помощь</a>
-                  </h3>
-                  <h3>
-                    <a href="/public/circles/">Колонки</a>
-                  </h3>
-                  <h3>
-                    <a href="/feed_topics/1/">RSS</a>
-                  </h3>
-                </div>
-              </div>
-              <noindex>
-                <a href="/new_topic/" rel="nofollow" class="h_new_topic3 blue">
-                  Добавить&nbsp;топик
-                </a>
-              </noindex>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="clear">
-        {" "}
       </div>
     </div>
   </>
