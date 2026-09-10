@@ -322,7 +322,7 @@ export async function getLeaderboard(): Promise<{
     .innerJoin(users, eq(users.id, topics.authorId))
     .groupBy(users.id)
     .orderBy(desc(count(topics.id)))
-    .limit(7);
+    .limit(5);
 
   const commenters = await db
     .select({ id: users.id, username: users.username, avatar: users.avatarUrl, score: count(comments.id) })
@@ -330,7 +330,7 @@ export async function getLeaderboard(): Promise<{
     .innerJoin(users, eq(users.id, comments.authorId))
     .groupBy(users.id)
     .orderBy(desc(count(comments.id)))
-    .limit(7);
+    .limit(5);
 
   return { authors, commenters };
 }

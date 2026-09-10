@@ -208,37 +208,70 @@ export const Leaderboard: FC<{
   authors: { id: number; username: string; avatar: string | null; score: number }[];
   commenters: { id: number; username: string; avatar: string | null; score: number }[];
 }> = ({ authors, commenters }) => (
-  <div class="div_table">
-    <div class="div_row">
-      <div class="div_cell div_half">
-        <div class="div_tape_top_left2">Лучшие авторы недели</div>
-        <div class="div_panel_view" style="background:white">
-          {authors.map((u, i) => (
-            <div class="div_topic_min" key={u.id}>
-              <Avatar src={u.avatar} size="24px" className="img_topic_min_avatar" />
-              <span>{i + 1}. </span>
-              <a href={`/users/${u.username}`}>{u.username}</a>
-              <span class="dark">{u.score}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div class="div_cell div_half">
-        <div class="div_tape_top_left2">Лучшие комментаторы недели</div>
-        <div class="div_panel_view" style="background:white">
-          {commenters.map((u, i) => (
-            <div class="div_topic_min" key={u.id}>
-              <Avatar src={u.avatar} size="24px" className="img_topic_min_avatar" />
-              <span>{i + 1}. </span>
-              <a href={`/users/${u.username}`}>{u.username}</a>
-              <span class="dark">{u.score}</span>
-            </div>
-          ))}
-          {commenters.length === 0 ? <div class="dark" style="padding:5px">Пока нет данных</div> : null}
+  <noindex>
+    <div class="div_block">
+      <div class="div_table">
+        <div class="div_row">
+          <div class="div_cell ad3">
+            <h3 class="h_index">Лучшие авторы за неделю:</h3>
+            {authors.length === 0 ? (
+              <div class="dark" style="padding:5px">Пока нет данных</div>
+            ) : (
+              <table cellpadding="0" cellspacing="0">
+                <tbody>
+                  {authors.map((u) => (
+                    <tr key={u.id}>
+                      <td style="vertical-align:middle;text-align:right">
+                        <h2>
+                          <span class="dark">{u.score}</span>
+                        </h2>
+                      </td>
+                      <td style="vertical-align:middle;height:24px;padding:4px">
+                        <img src={avatarSrc(u.avatar)} style="max-width:24px" alt="" />
+                      </td>
+                      <td style="vertical-align:middle">
+                        <h3>
+                          <a href={`/users/${u.username}`}>{u.username}</a>
+                        </h3>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div class="div_cell ad3">
+            <h3 class="h_index">Лучшие комментаторы за неделю:</h3>
+            {commenters.length === 0 ? (
+              <div class="dark" style="padding:5px">Пока нет данных</div>
+            ) : (
+              <table cellpadding="0" cellspacing="0">
+                <tbody>
+                  {commenters.map((u) => (
+                    <tr key={u.id}>
+                      <td style="vertical-align:middle;text-align:right">
+                        <h2>
+                          <span class="dark">{u.score}</span>
+                        </h2>
+                      </td>
+                      <td style="vertical-align:middle;height:24px;padding:4px">
+                        <img src={avatarSrc(u.avatar)} style="max-width:24px" alt="" />
+                      </td>
+                      <td style="vertical-align:middle">
+                        <h3>
+                          <a href={`/users/${u.username}`}>{u.username}</a>
+                        </h3>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
     </div>
-  </div>
+  </noindex>
 );
 
 export const Pagination: FC<{
