@@ -37,6 +37,28 @@ export async function getComments(topicId: number): Promise<TopicComment[]> {
   return rows;
 }
 
+export async function getCommentById(commentId: number): Promise<TopicComment | undefined> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({
+      id: comments.id,
+      topicId: comments.topicId,
+      parentId: comments.parentId,
+      body: comments.body,
+      votesUp: comments.votesUp,
+      votesDown: comments.votesDown,
+      createdAt: comments.createdAt,
+      authorId: users.id,
+      authorUsername: users.username,
+      authorAvatar: users.avatarUrl,
+    })
+    .from(comments)
+    .innerJoin(users, eq(users.id, comments.authorId))
+    .where(eq(comments.id, commentId))
+    .limit(1);
+  return rows[0];
+}
+
 export async function getCommentCount(topicId: number): Promise<number> {
   const db = getDrizzle();
   const rows = await db

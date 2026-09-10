@@ -22,8 +22,8 @@ import {
   HotTopics,
   SidebarAd,
 } from "../sidebar/components";
-import { CommentList, CommentForm } from "../comments/components";
-import { getComments, addComment } from "../comments/service";
+import { CommentFragment, CommentList, CommentForm } from "../comments/components";
+import { getComments, addComment, getCommentById } from "../comments/service";
 
 const app = new Hono<{ Variables: UserContext }>();
 
@@ -222,15 +222,35 @@ app.post("/topics/:id/add_comment/:parentId/", (c) => {
   return postComment(c, user, Number(c.req.param("parentId")) || null);
 });
 
+function isXhr(c: any): boolean {
+  return (
+    c.req.header("x-requested-with") === "XMLHttpRequest" ||
+    (c.req.header("accept") ?? "").includes("application/json")
+  );
+}
+
 async function postComment(c: any, user: any, parentId: number | null) {
-  if (!user) return c.redirect("/login");
+  const xhr = isXhr(c);
+  if (!user) {
+    if (xhr) return c.json({ ok: false, error: "auth" }, 401);
+    return c.redirect("/login");
+  }
   const id = Number(c.req.param("id")) || 0;
   const topic = await getTopicBySlug(id);
   if (!topic) return c.notFound();
   const body = await c.req.parseBody();
   const text = String(body.body ?? "").trim().slice(0, 4000);
-  if (!text) return c.redirect(`/topics/${id}/${topic.slug}`);
-  await addComment({ topicId: id, parentId, authorId: user.id, body: text });
+  if (!text) {
+    if (xhr) return c.json({ ok: false, error: "empty" });
+    return c.redirect(`/topics/${id}/${topic.slug}`);
+  }
+  const commentId = await addComment({ topicId: id, parentId, authorId: user.id, body: text });
+  if (xhr) {
+    const fresh = await getCommentById(commentId);
+    let html = "";
+    if (fresh) html = String(<CommentFragment comment={fresh} />);
+    return c.json({ ok: true, html, parentId });
+  }
   return c.redirect(`/topics/${id}/${topic.slug}#div_comments_0`);
 }
 
