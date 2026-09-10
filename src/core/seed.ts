@@ -341,23 +341,30 @@ async function seed() {
     },
   ];
 
-  const topicsInsertData = topicSeed.map((t) => ({
-    title: t.title,
-    slug: slugify(t.title),
-    body: t.body,
-    categoryId: catById[t.category]!,
-    authorId: userById[t.author]! ?? userById["demo"]!,
-    leadImage: t.leadImage,
-    votesUp: t.votesUp,
-    votesDown: t.votesDown,
-  }));
+  const nowT = Date.now();
+  const topicsInsertData = topicSeed.map((t, i) => {
+    const ageHours = (topicSeed.length - 1 - i) * 2.2;
+    const createdAt = new Date(nowT - ageHours * 3600_000);
+    return {
+      title: t.title,
+      slug: slugify(t.title),
+      body: t.body,
+      categoryId: catById[t.category]!,
+      authorId: userById[t.author]! ?? userById["demo"]!,
+      leadImage: t.leadImage,
+      votesUp: t.votesUp,
+      votesDown: t.votesDown,
+      createdAt,
+    };
+  });
   await db.insert(topics).values(topicsInsertData);
 
   const topicRows = await db
-    .select({ id: topics.id, title: topics.title })
+    .select({ id: topics.id, title: topics.title, createdAt: topics.createdAt })
     .from(topics);
 
   const topicByTitle = Object.fromEntries(topicRows.map((t) => [t.title, t.id]));
+  const topicDateByTitle = Object.fromEntries(topicRows.map((t) => [t.title, t.createdAt]));
 
   const topicTagValues: { topicId: number; tagId: number }[] = [];
   for (const t of topicSeed) {
@@ -377,7 +384,8 @@ async function seed() {
   for (const t of topicSeed) {
     const topicId = topicByTitle[t.title]!;
     let count = 0;
-    for (const cm of t.commentsSeed ?? []) {
+    for (const [j, cm] of (t.commentsSeed ?? []).entries()) {
+      const topicDate = (topicDateByTitle[t.title] ?? new Date()) as Date;
       commentValues.push({
         topicId,
         parentId: null,
@@ -385,6 +393,7 @@ async function seed() {
         body: cm.body,
         votesUp: 0,
         votesDown: 0,
+        createdAt: new Date(topicDate.getTime() + (j + 1) * 37 * 60_000),
       });
       count++;
     }

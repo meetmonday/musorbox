@@ -20,7 +20,7 @@ export const users = sqliteTable(
     ratingOptout: integer("rating_optout", { mode: "boolean" }).notNull().default(false),
     wasEverAuthor: integer("was_ever_author", { mode: "boolean" }).notNull().default(false),
     wasEverCommenter: integer("was_ever_commenter", { mode: "boolean" }).notNull().default(false),
-    created_at: integer("created_at", { mode: "timestamp" }).notNull().defaultNow(),
+    created_at: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("users_username_idx").on(t.username)],
 );
@@ -32,8 +32,8 @@ export const sessions = sqliteTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" }).notNull().defaultNow(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
@@ -72,8 +72,8 @@ export const topics = sqliteTable(
     commentCount: integer("comment_count").notNull().default(0),
     isPinned: integer("is_pinned", { mode: "boolean" }).notNull().default(false),
     views: integer("views").notNull().default(0),
-    createdAt: integer("created_at", { mode: "timestamp" }).notNull().defaultNow(),
-    updatedAt: integer("updated_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
   },
   (t) => [
     uniqueIndex("topics_id_slug_idx").on(t.id, t.slug),
@@ -125,7 +125,7 @@ export const comments = sqliteTable(
     body: text("body").notNull(),
     votesUp: integer("votes_up").notNull().default(0),
     votesDown: integer("votes_down").notNull().default(0),
-    createdAt: integer("created_at", { mode: "timestamp" }).notNull().defaultNow(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
   },
   (t) => [
     index("comments_topic_idx").on(t.topicId),
@@ -143,7 +143,7 @@ export const votes = sqliteTable(
     entityType: text("entity_type", { enum: ["topic", "comment"] }).notNull(),
     entityId: integer("entity_id").notNull(),
     value: integer("value").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" }).notNull().defaultNow(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.userId, t.entityType, t.entityId] }),
