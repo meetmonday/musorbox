@@ -67,6 +67,15 @@ export function formatDate(date: Date): string {
   return `${d} ${m} ${y} - ${hh}:${mm}`;
 }
 
+export function formatDateDots(date: Date): string {
+  const d = date.getDate();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const y = date.getFullYear();
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${d}.${m}.${y} — ${hh}:${mm}`;
+}
+
 export function pluralize(n: number, one: string, few: string, many: string): string {
   const mod10 = n % 10;
   const mod100 = n % 100;

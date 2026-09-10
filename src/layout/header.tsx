@@ -189,7 +189,7 @@ export const Header: FC<{ user: LayoutUser }> = ({ user }) => (
                     </div>
                     <div class="div_cell adh1">
                       {user ? (
-                        <a href={`/users/${user.username}`} class="a_userbar_button" title="Профиль">
+                        <a href={`/users/${user.username}/`} class="a_userbar_button" title="Профиль">
                           <img
                             src={user.avatarUrl ?? "/images/default_avatar.png"}
                             class="img_userbar_button"

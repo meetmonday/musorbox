@@ -9,6 +9,7 @@ import topicsRoutes from "./topics/routes";
 import authRoutes from "./auth/routes";
 import forumRoutes from "./forum/routes";
 import votesRoutes from "./votes/routes";
+import usersRoutes from "./users/routes";
 
 type AppEnv = {
   Variables: UserContext;
@@ -28,6 +29,7 @@ app.route("/", topicsRoutes);
 app.route("/", authRoutes);
 app.route("/", forumRoutes);
 app.route("/", votesRoutes);
+app.route("/", usersRoutes);
 
 app.all("*", (c) => c.text("Not found", 404));
 

@@ -98,14 +98,14 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
     <table cellpadding="0" cellspacing="0">
       <tr>
         <td class="td1">
-          <a href={`/users/${topic.authorUsername}`}>
+          <a href={`/users/${topic.authorUsername}/`}>
             <Avatar src={topic.authorAvatar} size="48px" />
           </a>
         </td>
         <td class="td2">
           <div>
             <span class="span_link">
-              <a rel="nofollow" href={`/users/${topic.authorUsername}`}>
+              <a rel="nofollow" href={`/users/${topic.authorUsername}/`}>
                 {topic.authorUsername}
               </a>
               <span class="dark">, {formatDate(topic.createdAt)}</span>
@@ -231,7 +231,7 @@ export const Leaderboard: FC<{
                       </td>
                       <td style="vertical-align:middle">
                         <h3>
-                          <a href={`/users/${u.username}`}>{u.username}</a>
+                          <a href={`/users/${u.username}/`}>{u.username}</a>
                         </h3>
                       </td>
                     </tr>
@@ -259,7 +259,7 @@ export const Leaderboard: FC<{
                       </td>
                       <td style="vertical-align:middle">
                         <h3>
-                          <a href={`/users/${u.username}`}>{u.username}</a>
+                          <a href={`/users/${u.username}/`}>{u.username}</a>
                         </h3>
                       </td>
                     </tr>
@@ -339,7 +339,7 @@ export const TopicMini: FC<{ topic: TopicListItem; showAuthor?: boolean; arrow?:
       {showAuthor ? (
         <>
           {" — "}
-          <a href={`/users/${topic.authorUsername}`}>{topic.authorUsername}</a>
+          <a href={`/users/${topic.authorUsername}/`}>{topic.authorUsername}</a>
         </>
       ) : null}
       {arrow ? " →" : ""}
@@ -354,14 +354,14 @@ export const TopicDetailView: FC<{ topic: TopicDetail }> = ({ topic }) => {
       <table cellpadding="0" cellspacing="0">
         <tr>
           <td class="td1">
-            <a href={`/users/${topic.authorUsername}`}>
+            <a href={`/users/${topic.authorUsername}/`}>
               <Avatar src={topic.authorAvatar} size="48px" />
             </a>
           </td>
           <td class="td2">
             <div>
               <span class="span_link">
-                <a rel="nofollow" href={`/users/${topic.authorUsername}`}>
+                <a rel="nofollow" href={`/users/${topic.authorUsername}/`}>
                   {topic.authorUsername}
                 </a>
                 <span class="dark">, {formatDate(topic.createdAt)}</span>

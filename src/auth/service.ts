@@ -18,6 +18,7 @@ export async function login(username: string, password: string): Promise<AuthRes
   if (!user) return { ok: false, error: "Неверный логин или пароль." };
   const valid = await compare(password, user.passwordHash);
   if (!valid) return { ok: false, error: "Неверный логин или пароль." };
+  await db.update(users).set({ last_seen_at: new Date() }).where(eq(users.id, user.id));
   return createSession(user.id);
 }
 

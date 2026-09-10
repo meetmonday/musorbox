@@ -79,7 +79,7 @@ export function mapTopicDetail(r: Omit<TopicRow, "tags">): TopicDetail {
   };
 }
 
-const topicSelect = {
+export const topicSelect = {
   topics_id: topics.id,
   topics_title: topics.title,
   topics_slug: topics.slug,

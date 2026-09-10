@@ -21,6 +21,7 @@ export const users = sqliteTable(
     wasEverAuthor: integer("was_ever_author", { mode: "boolean" }).notNull().default(false),
     wasEverCommenter: integer("was_ever_commenter", { mode: "boolean" }).notNull().default(false),
     created_at: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    last_seen_at: integer("last_seen_at", { mode: "timestamp_ms" }),
   },
   (t) => [uniqueIndex("users_username_idx").on(t.username)],
 );

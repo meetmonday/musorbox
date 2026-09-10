@@ -47,7 +47,7 @@ const CommentTop: FC<{ comment: TopicComment }> = ({ comment }) => {
         </div>
       </div>
       <div class="div_header">
-        <a rel="nofollow" href={`/users/${comment.authorUsername}`}>
+        <a rel="nofollow" href={`/users/${comment.authorUsername}/`}>
           {comment.authorUsername}
         </a>
         <span class="dark">, {formatDate(comment.createdAt)}</span>{" "}

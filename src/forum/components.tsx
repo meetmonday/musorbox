@@ -64,7 +64,7 @@ export const ThreadRow: FC<{ topic: TopicListItem; rowIndex: number }> = ({ topi
           {topic.title}
         </a>
         <div class="div_forum_author">
-          <a href={`/users/${topic.authorUsername}`} class="dark2">
+          <a href={`/users/${topic.authorUsername}/`} class="dark2">
             {topic.authorUsername}
           </a>
           <span class="dark">, {replyCountText(topic.commentCount)}</span>

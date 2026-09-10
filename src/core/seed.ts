@@ -19,7 +19,7 @@ async function seed() {
   await db.delete(categories);
 
   console.log("[seed] users...");
-  await db.insert(users).values([
+  const userSeed: (typeof users.$inferInsert)[] = [
     {
       username: "Bobs",
       passwordHash: await hash("secret", 10),
@@ -71,7 +71,15 @@ async function seed() {
       role: "user",
       avatarUrl: "/avatars/5054_6327bf_avatar.png_min_siAb.png",
     },
-  ]);
+  ];
+  const nowU = Date.now();
+  await db.insert(users).values(
+    userSeed.map((u, i) => ({
+      ...u,
+      created_at: new Date(nowU - (i + 9) * 30 * 24 * 3600_000),
+      last_seen_at: new Date(nowU - i * 5 * 24 * 3600_000 - 60 * 60_000),
+    })),
+  );
   const seededUsers = await db
     .select({ id: users.id, username: users.username })
     .from(users);
@@ -391,8 +399,8 @@ async function seed() {
         parentId: null,
         authorId: userById[cm.author] ?? userById["demo"]!,
         body: cm.body,
-        votesUp: 0,
-        votesDown: 0,
+        votesUp: [0, 2, 1, 3, 1, 0, 2, 1, 4, 0][j % 10],
+        votesDown: j % 3 === 0 ? 1 : 0,
         createdAt: new Date(topicDate.getTime() + (j + 1) * 37 * 60_000),
       });
       count++;

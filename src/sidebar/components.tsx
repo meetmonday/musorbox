@@ -8,21 +8,21 @@ export const SidebarTopicRow: FC<{
   heat?: number;
 }> = ({ topic, hot, heat }) => {
   const authorLine = hot ? (
-    <a class="dark" rel="nofollow" href={`/users/${topic.authorUsername}`}>
+    <a class="dark" rel="nofollow" href={`/users/${topic.authorUsername}/`}>
       {topic.authorUsername}
     </a>
   ) : topic.replier ? (
     <>
-      <a class="dark" rel="nofollow" href={`/users/${topic.replier}`}>
+      <a class="dark" rel="nofollow" href={`/users/${topic.replier}/`}>
         {topic.replier}
       </a>
       {" → "}
-      <a class="dark" rel="nofollow" href={`/users/${topic.replierSubject}`}>
+      <a class="dark" rel="nofollow" href={`/users/${topic.replierSubject}/`}>
         {topic.replierSubject}
       </a>
     </>
   ) : (
-    <a class="dark" rel="nofollow" href={`/users/${topic.authorUsername}`}>
+    <a class="dark" rel="nofollow" href={`/users/${topic.authorUsername}/`}>
       {topic.authorUsername}
     </a>
   );
