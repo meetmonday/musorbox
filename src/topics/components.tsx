@@ -23,25 +23,75 @@ export const Avatar: FC<{ src: string | null; size?: string; className?: string 
   />
 );
 
-export const VoteBar: FC<{ up: number; down: number; total?: number }> = ({ up, down, total = 120 }) => {
+export const VoteBar: FC<{ id: number; up: number; down: number; total?: number }> = ({
+  id,
+  up,
+  down,
+  total = 120,
+}) => {
   const { upPx, downPx } = voteBarWidths(up, down, total);
   const score = up - down;
   return (
-    <>
-      <div class="right div_topic_votes_current">
-        <nobr>{score > 0 ? `+${score}` : String(score)}</nobr>
-      </div>
-      <div class="div_topic_votes_bar">
-        <div style={`background:#1FB6F2;float:left;width:${upPx}px;height:4px`}> </div>
-        <div style={`background:#999999;float:left;width:${downPx}px;height:4px`}> </div>
-        <br class="clear" />
-      </div>
-      <div class="right div_topic_votes_advanced">
-        <span>{up} нравится</span>, <span>{down} не нравится</span>
-      </div>
-    </>
+    <div id={`div_vote_0_${id}`} class="div_votes_control">
+      <noindex>
+        <table cellpadding="0" cellspacing="0" style="width:auto">
+          <tbody>
+            <tr>
+              <td style="width:1%">
+                <div class="div_topic_votes_current">
+                  <nobr>{score > 0 ? `+${score}` : String(score)}</nobr>
+                </div>
+              </td>
+              <td style="width:1%">
+                <div class="div_topic_votes_advanced">
+                  <nobr>{up} понравилось</nobr>
+                  <table cellpadding="0" cellspacing="0" class="div_topic_votes_bar">
+                    <tbody>
+                      <tr>
+                        <td style={`background:#1FB6F2;width:${upPx}px`}> </td>
+                        <td style={`background:#999999;width:${downPx}px`}> </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <nobr>{down} не понравилось</nobr>
+                </div>
+              </td>
+              <td style="width:1%">
+                <table cellpadding="0" cellspacing="0" class="div_topic_votes_buttons">
+                  <tbody>
+                    <tr>
+                      <td style="background:#1FB6F2;padding:0px 5px">+</td>
+                    </tr>
+                    <tr>
+                      <td style="background:#999999;padding:0px 5px">–</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+              <td>
+                <div class="div_topic_votes_join" id={`div_votes_like_${id}`}> </div>
+              </td>
+              <td> </td>
+            </tr>
+          </tbody>
+        </table>
+      </noindex>
+    </div>
   );
 };
+
+export const DiscussButton: FC<{ count: number; href: string }> = ({ count, href }) => (
+  <a href={href} class="blue div_topic_discuss">
+    <div class="div_table2 right">
+      <div class="div_row">
+        <div class="div_cell div_topic_discuss_count blue">{count}</div>
+        <div class="div_cell div_topic_discuss_go blue">
+          {count > 0 ? "Обсудить" : "Обсудить"}&nbsp;→
+        </div>
+      </div>
+    </div>
+  </a>
+);
 
 export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
   <div class="div_topic" id={`div_topic_${topic.id}`}>
@@ -53,29 +103,52 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
           </a>
         </td>
         <td class="td2">
-          <div class="dark" style="font-size:1.2em">
-            <a href={`/users/${topic.authorUsername}`}>{topic.authorUsername}</a>,{" "}
-            {formatDate(topic.createdAt)}
+          <div>
+            <span class="span_link">
+              <a rel="nofollow" href={`/users/${topic.authorUsername}`}>
+                {topic.authorUsername}
+              </a>
+              <span class="dark">, {formatDate(topic.createdAt)}</span>
+            </span>
           </div>
-          <h1 class="h_topic_caption">
+          <h2 class="h_topic_caption">
             <a href={topicUrl(topic)} class="black">
               {topic.title}
             </a>
-          </h1>
+          </h2>
+          <div class="div_topic_caption_tags">
+            {topic.tags.length > 0 ? (
+              <>
+                {topic.tags.map((t, i) => (
+                  <span key={t.id}>
+                    {i > 0 ? ", " : ""}
+                    <a href={`/public/${topic.categorySlug}/tags/${t.slug}/`}>
+                      {t.name}
+                    </a>
+                  </span>
+                ))}
+              </>
+            ) : null}
+          </div>
         </td>
       </tr>
     </table>
     <div class="div_text">
       <div class="div_full_screens">
         {topic.leadImage ? (
-          <div class="div_image_news div_image_zoom">
-            <a>
-              <img src={topic.leadImage} style="max-width:380px;height:auto" alt={topic.title} />
+          <div class="div_image_news">
+            <a href={topicUrl(topic)} rel="nofollow">
+              <img
+                src={topic.leadImage}
+                style="max-width:380px;height:auto"
+                alt={topic.title}
+                title={topic.title}
+              />
             </a>
           </div>
         ) : null}
       </div>
-      <div style="font-size:1.3em;line-height:1.5">{excerpt(topic.body, 220)}</div>
+      <div>{excerpt(topic.body, 220)}</div>
       {topic.body.length > 220 ? (
         <a href={topicUrl(topic)} class="dark2" style="font-size:1.2em">
           Читать дальше →
@@ -83,51 +156,22 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
       ) : null}
       <br class="clear" />
     </div>
-    <table class="div_topic_bottom" cellpadding="0" cellspacing="0">
+    <div class="div_social3" id={`div_social3_${topic.id}`}> </div>
+    <table cellpadding="0" cellspacing="0" class="div_topic_bottom">
       <tr>
-        <td class="div_topic_votes_buttons">
-          <a
-            class="blue a_nobackground"
-            style="padding:5px 10px"
-            onclick="return false"
-            href="#"
-          >
-            +
-          </a>
-          <a
-            class="blue a_nobackground"
-            style="padding:5px 10px"
-            onclick="return false"
-            href="#"
-          >
-            −
-          </a>
-        </td>
-        <td style="width:200px">
-          <VoteBar up={topic.votesUp} down={topic.votesDown} />
-        </td>
         <td>
-          <div class="a_trashcut">
-            <a href={topicUrl(topic)}>
-              {topic.commentCount > 0 ? (
-                <>{replyCountText(topic.commentCount)}, обсудить</>
-              ) : (
-                <>Обсудить</>
-              )}
-            </a>
-          </div>
+          <VoteBar id={topic.id} up={topic.votesUp} down={topic.votesDown} />
+        </td>
+        <td style="vertical-align:middle;width:1%">
+          <DiscussButton
+            count={topic.commentCount}
+            href={`${topicUrl(topic)}#comments`}
+          />
         </td>
       </tr>
     </table>
-    {topic.tags.length > 0 ? (
-      <div class="div_topic_caption_tags">
-        {topic.tags.map((t) => (
-          <span key={t.id}>
-            <a href={`/public/${topic.categorySlug}/tags/${t.slug}/`}>#{t.name}</a>{" "}
-          </span>
-        ))}
-      </div>
-    ) : null}
+    <div class="div_bookmarks" id={`div_bookmarks_${topic.id}`}> </div>
+    <br class="clear" />
   </div>
 );
 
@@ -282,38 +326,27 @@ export const TopicDetailView: FC<{ topic: TopicDetail }> = ({ topic }) => {
             </a>
           </td>
           <td class="td2">
-            <div class="dark" style="font-size:1.2em">
-              <a href={`/users/${topic.authorUsername}`} class="dark">
-                {topic.authorUsername}
-              </a>
-              , {formatDate(topic.createdAt)}
+            <div>
+              <span class="span_link">
+                <a rel="nofollow" href={`/users/${topic.authorUsername}`}>
+                  {topic.authorUsername}
+                </a>
+                <span class="dark">, {formatDate(topic.createdAt)}</span>
+              </span>
             </div>
             <h1 class="h_topic_caption">
               <a href={topicUrl(topic)} class="black">
                 {topic.title}
               </a>
             </h1>
-            {!isForum ? (
-              <div class="div_topic_caption_tags">
-                <a href={`/public/${topic.categorySlug}/`} class="dark">
-                  {topic.categoryName}
-                </a>
-                {topic.tags.map((t) => (
-                  <span key={t.id}>
-                    {" "}
-                    <a href={`/public/${topic.categorySlug}/tags/${t.slug}/`}>#{t.name}</a>
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <div class="div_topic_caption_tags">
-                {topic.tags.map((t) => (
-                  <span key={t.id}>
-                    <a href={`/public/${topic.categorySlug}/tags/${t.slug}/`}>#{t.name}</a>{" "}
-                  </span>
-                ))}
-              </div>
-            )}
+            <div class="div_topic_caption_tags">
+              {topic.tags.map((t, i) => (
+                <span key={t.id}>
+                  {i > 0 ? ", " : ""}
+                  <a href={`/public/${topic.categorySlug}/tags/${t.slug}/`}>{t.name}</a>
+                </span>
+              ))}
+            </div>
           </td>
         </tr>
       </table>
@@ -327,31 +360,19 @@ export const TopicDetailView: FC<{ topic: TopicDetail }> = ({ topic }) => {
             </div>
           ) : null}
         </div>
-        <div style="font-size:1.3em;line-height:1.5">{topic.body}</div>
+        <div>{topic.body}</div>
       </div>
-      <table class="div_topic_bottom" cellpadding="0" cellspacing="0">
+      <div class="div_social3" id={`div_social3_${topic.id}`}> </div>
+      <table cellpadding="0" cellspacing="0" class="div_topic_bottom">
         <tr>
-          <td class="div_topic_votes_buttons">
-            <a class="blue a_nobackground" style="padding:5px 10px" onclick="return false" href="#">
-              +
-            </a>
-            <a class="blue a_nobackground" style="padding:5px 10px" onclick="return false" href="#">
-              −
-            </a>
-          </td>
-          <td style="width:200px">
-            <VoteBar up={topic.votesUp} down={topic.votesDown} />
-          </td>
           <td>
-            <div class="a_trashcut">
-              <a href="#div_comments_0">
-                {topic.commentCount > 0 ? replyCountText(topic.commentCount) : "Обсудить"}
-              </a>
-            </div>
+            <VoteBar id={topic.id} up={topic.votesUp} down={topic.votesDown} />
+          </td>
+          <td style="vertical-align:middle;width:1%">
+            <DiscussButton count={topic.commentCount} href="#div_comments_0" />
           </td>
         </tr>
       </table>
-      <div class="div_social3" id={`div_social3_${topic.id}`}> </div>
       <div class="div_bookmarks" id={`div_bookmarks_${topic.id}`}> </div>
     </div>
   );

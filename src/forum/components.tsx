@@ -17,23 +17,29 @@ export const TagFilter: FC<{ os: TagGroup[]; quest: TagGroup[] }> = ({ os, quest
       <a href="/public/b_questions/">Форум</a>
     </h2>
     <div class="div_tags_menu">
-      <div class="div_tags_menu_block2">
-        <h3 class="h_navigator_caption">Операционная система</h3>
+      <div class="div_tags_menu_block1">
+        <div class="div_tags_menu_block2">
+          <div class="h_tags_menu">Операционная система</div>
+          {os.map((t) => (
+            <h3 key={t.id}>
+              <a class={`span_tags_menu${t.weight}`} href={`/public/b_questions/tags/${t.slug}/`}>
+                <nobr>{t.name}</nobr>
+              </a>
+            </h3>
+          ))}
+        </div>
         <br class="clear" />
-        {os.map((t) => (
-          <span class={`span_tags_menu${t.weight}`} key={t.id}>
-            <a href={`/public/b_questions/tags/${t.slug}/`}>{t.name}</a>
-          </span>
-        ))}
-      </div>
-      <div class="div_tags_menu_block2">
-        <h3 class="h_navigator_caption">Темы</h3>
+        <div class="div_tags_menu_block2">
+          <div class="h_tags_menu">Темы</div>
+          {quest.map((t) => (
+            <h3 key={t.id}>
+              <a class={`span_tags_menu${t.weight}`} href={`/public/b_questions/tags/${t.slug}/`}>
+                <nobr>{t.name}</nobr>
+              </a>
+            </h3>
+          ))}
+        </div>
         <br class="clear" />
-        {quest.map((t) => (
-          <span class={`span_tags_menu${t.weight}`} key={t.id}>
-            <a href={`/public/b_questions/tags/${t.slug}/`}>{t.name}</a>
-          </span>
-        ))}
       </div>
     </div>
   </div>

@@ -19,16 +19,24 @@ const CommentNode: FC<{
         <img src="/images/default_avatar.png" style="width:24px;height:24px" alt="" />
       )}
     </div>
-    <div class="right">
-      <table cellpadding="0" cellspacing="0">
+    <div id={`div_vote_1_${comment.id}`} class="div_votes_control">
+      <table class="div_votes_control" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="background: #999999; padding: 0px 5px; color:#fff">–</td>
-          <td>
-            <div class="div_comment_votes_current div_vote_zero">
-              {comment.votesUp - comment.votesDown}
+          <td class="div_comment_votes_buttons">
+            <table>
+              <tr>
+                <td style="background:#1FB6F2;padding:0px 5px">+</td>
+              </tr>
+              <tr>
+                <td style="background:#999999;padding:0px 5px">–</td>
+              </tr>
+            </table>
+          </td>
+          <td class="right">
+            <div class={`div_comment_votes_current${comment.votesUp - comment.votesDown === 0 ? " div_vote_zero" : ""}`}>
+              <nobr>{comment.votesUp - comment.votesDown}</nobr>
             </div>
           </td>
-          <td style="background: #1FB6F2; padding: 0px 5px; color:#fff">+</td>
         </tr>
       </table>
     </div>
