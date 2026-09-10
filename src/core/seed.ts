@@ -1,5 +1,5 @@
 import { getDrizzle } from "./db";
-import { users, categories, topics, tags, topicTags, firms, comments, sessions } from "./schema";
+import { users, categories, topics, tags, topicTags, firms, comments, sessions, votes } from "./schema";
 import { slugify } from "./utils";
 import { hash } from "bcryptjs";
 import { eq } from "drizzle-orm";
@@ -10,6 +10,7 @@ async function seed() {
   console.log("[seed] clearing old data...");
   await db.delete(topicTags);
   await db.delete(comments);
+  await db.delete(votes);
   await db.delete(topics);
   await db.delete(tags);
   await db.delete(sessions);

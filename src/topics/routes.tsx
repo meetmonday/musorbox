@@ -18,8 +18,8 @@ import {
   Pagination,
 } from "./components";
 import { RecentDiscussions, NewOnSite, SidebarAd } from "../sidebar/components";
-import { CommentList } from "../comments/components";
-import { getComments } from "../comments/service";
+import { CommentList, CommentForm } from "../comments/components";
+import { getComments, addComment } from "../comments/service";
 
 const app = new Hono<{ Variables: UserContext }>();
 
@@ -204,12 +204,35 @@ app.get("/topics/:id/:slug", async (c) => {
         <a name="comments" />
         <div id="div_comments_0">
           <CommentList comments={comments} />
+          <CommentForm topicId={topic.id} loggedIn={Boolean(c.get("user"))} />
         </div>
       </div>
     ),
   });
   return c.html(`<!DOCTYPE html>${html}`);
 });
+
+app.post("/topics/:id/add_comment/", (c) => {
+  const user = c.get("user");
+  return postComment(c, user, null);
+});
+
+app.post("/topics/:id/add_comment/:parentId/", (c) => {
+  const user = c.get("user");
+  return postComment(c, user, Number(c.req.param("parentId")) || null);
+});
+
+async function postComment(c: any, user: any, parentId: number | null) {
+  if (!user) return c.redirect("/login");
+  const id = Number(c.req.param("id")) || 0;
+  const topic = await getTopicBySlug(id);
+  if (!topic) return c.notFound();
+  const body = await c.req.parseBody();
+  const text = String(body.body ?? "").trim().slice(0, 4000);
+  if (!text) return c.redirect(`/topics/${id}/${topic.slug}`);
+  await addComment({ topicId: id, parentId, authorId: user.id, body: text });
+  return c.redirect(`/topics/${id}/${topic.slug}#div_comments_0`);
+}
 
 app.get("/public/all_topics/", async (c) => {
   const page = Number(c.req.query("page")) || 1;

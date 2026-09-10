@@ -1,6 +1,6 @@
 import { getDrizzle } from "../core/db";
-import { comments, users } from "../core/schema";
-import { asc, eq } from "drizzle-orm";
+import { comments, topics, users } from "../core/schema";
+import { asc, eq, sql } from "drizzle-orm";
 
 export type TopicComment = {
   id: number;
@@ -62,5 +62,9 @@ export async function addComment(opts: {
       body: opts.body,
     })
     .returning({ id: comments.id });
+  await db
+    .update(topics)
+    .set({ commentCount: sql`${topics.commentCount} + 1` })
+    .where(eq(topics.id, opts.topicId));
   return ids[0]?.id ?? 0;
 }

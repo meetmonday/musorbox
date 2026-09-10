@@ -50,3 +50,28 @@ export const CommentList: FC<{ comments: TopicComment[] }> = ({ comments }) => (
     ))}
   </div>
 );
+
+export const CommentForm: FC<{ topicId: number; loggedIn: boolean }> = ({ topicId, loggedIn }) => (
+  <div id="div_new_comment_0" class="div_new_comment clear">
+    {loggedIn ? (
+      <form method="post" action={`/topics/${topicId}/add_comment/`} id="frm_new_comment">
+        <textarea
+          name="body"
+          rows={5}
+          style="width:98%;font-size:1.3em;font-family:inherit"
+          placeholder="Ваш комментарий..."
+          required
+        />
+        <div style="margin-top:5px">
+          <button type="submit" class="blue" style="padding:5px 15px;border:0;cursor:pointer">
+            Отправить
+          </button>
+        </div>
+      </form>
+    ) : (
+      <a href="/login" class="a_dashed">
+        Войдите, чтобы оставить комментарий
+      </a>
+    )}
+  </div>
+);
