@@ -33,16 +33,22 @@ document.addEventListener('click', function(e) {
       if (nobs[0]) nobs[0].textContent = d.up + ' понравилось';
       if (nobs[1]) nobs[1].textContent = d.down + ' не понравилось';
       var tds = adv.querySelectorAll('table td');
-      if (tds[0]) tds[0].style.width = d.up + 'px';
-      if (tds[1]) tds[1].style.width = d.down + 'px';
+      var total = d.up + d.down;
+      var upPx = total === 0 ? 0 : Math.round((d.up / total) * 120);
+      var downPx = total === 0 ? 120 : 120 - upPx;
+      if (tds[0]) tds[0].style.width = upPx + 'px';
+      if (tds[1]) tds[1].style.width = downPx + 'px';
     }
     var cAdv = ctrl.querySelector('.div_votes_control, table');
     if (cAdv && !adv) {
-      var cScore = ctrl.querySelector('.div_comment_votes_current');
-      if (cScore) {
-        cScore.textContent = score;
-        if (score === 0) cScore.classList.add('div_vote_zero');
-        else cScore.classList.remove('div_vote_zero');
+      var cNobr = ctrl.querySelector('.div_comment_votes_current nobr');
+      if (cNobr) {
+        cNobr.textContent = score;
+        var cScoreEl = ctrl.querySelector('.div_comment_votes_current');
+        if (cScoreEl) {
+          if (score === 0) cScoreEl.classList.add('div_vote_zero');
+          else cScoreEl.classList.remove('div_vote_zero');
+        }
       }
     }
   });
