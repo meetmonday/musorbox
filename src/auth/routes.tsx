@@ -15,7 +15,7 @@ async function renderAuthPage(c: any, opts: { action: "login" | "register"; erro
   const user = c.get("user") ?? null;
   const isLogin = opts.action === "login";
   const title = isLogin ? `Вход на сайт — ${config.siteName}` : `Регистрация — ${config.siteName}`;
-  const html = renderPage({
+  const html = await renderPage({
     title,
     user,
     children: (

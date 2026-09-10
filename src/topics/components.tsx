@@ -132,29 +132,32 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
 );
 
 export const FeaturedCarousel: FC<{ items: TopicListItem[] }> = ({ items }) => (
-  <div id="div_top_news_block">
-    <noindex>
-      <div class="div_table">
-        <div class="div_row">
-          {items.map((t) => (
-            <div class="div_cell div_top_news_b1" key={t.id}>
-              <a
-                class="div_top_news_b2"
-                href={topicUrl(t)}
-                style={
-                  t.leadImage ? { backgroundImage: `url(${t.leadImage})`, backgroundSize: "cover" } : {}
-                }
-              >
-                <div class="div_top_news_text">
-                  <span>{t.title}</span>
-                </div>
-              </a>
-            </div>
-          ))}
+  <noindex>
+    <div class="div_table clear adh2" id="div_top_news_block">
+      <div class="div_row">
+        <div id="div_top_news_caption" class="white">
+          Интересное
         </div>
+        {items.map((t) => (
+          <div class="div_cell div_top_news_b1" key={t.id}>
+            <a
+              class="div_top_news_b2"
+              href={topicUrl(t)}
+              style={
+                t.leadImage
+                  ? `background: url(${t.leadImage}) no-repeat center center; background-size: cover;`
+                  : `background: url(/img/blank-dark.png) #e7e7e7 no-repeat center center;`
+              }
+            >
+              <div class="div_top_news_text" align="center">
+                <span>{t.title}</span>
+              </div>
+            </a>
+          </div>
+        ))}
       </div>
-    </noindex>
-  </div>
+    </div>
+  </noindex>
 );
 
 export const Leaderboard: FC<{

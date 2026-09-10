@@ -5,7 +5,6 @@ import { layoutWithSidebar } from "../layout/layout";
 import {
   getTopicsByCategory,
   getTopicBySlug,
-  getFeaturedTopics,
   getRecentTopics,
   getRecentDiscussions,
   getLeaderboard,
@@ -14,7 +13,6 @@ import {
 import {
   TopicCard,
   TopicDetailView,
-  FeaturedCarousel,
   Leaderboard,
   Pagination,
 } from "./components";
@@ -76,13 +74,9 @@ async function renderSidebar() {
 app.get("/", async (c) => {
   const page = 1;
   const { items, total } = await getTopicsByCategory(undefined, page, config.mainPageSize);
-  const [featured, leaderboard, sidebar] = await Promise.all([
-    getFeaturedTopics(5),
-    getLeaderboard(),
-    renderSidebar(),
-  ]);
+  const [leaderboard, sidebar] = await Promise.all([getLeaderboard(), renderSidebar()]);
 
-  const html = layoutWithSidebar({
+  const html = await layoutWithSidebar({
     title: `Главная — ${config.siteName}`,
     description: `${config.siteName} — лучший мобильный портал. Новости, программы, обзоры.`,
     user: c.get("user") ?? null,
@@ -90,7 +84,6 @@ app.get("/", async (c) => {
     sidebar,
     children: (
       <div>
-        <FeaturedCarousel items={featured} />
         <Leaderboard authors={leaderboard.authors} commenters={leaderboard.commenters} />
         {items.map((t) => (
           <TopicCard key={t.id} topic={t} />
@@ -110,16 +103,15 @@ app.get("/", async (c) => {
 app.get("/page_topics/:page/", async (c) => {
   const page = Number(c.req.param("page")) || 1;
   const { items, total } = await getTopicsByCategory(undefined, page, config.mainPageSize);
-  const [featured, sidebar] = await Promise.all([getFeaturedTopics(5), renderSidebar()]);
+  const sidebar = await renderSidebar();
 
-  const html = layoutWithSidebar({
+  const html = await layoutWithSidebar({
     title: `${page} страница — ${config.siteName}`,
     user: c.get("user") ?? null,
     currentSection: "news",
     sidebar,
     children: (
       <div>
-        <FeaturedCarousel items={featured} />
         {items.map((t) => (
           <TopicCard key={t.id} topic={t} />
         ))}
@@ -140,7 +132,7 @@ for (const slug of Object.keys(categorySections)) {
     const { items, total } = await getTopicsByCategory(slug, 1, config.pageSize);
     const sidebar = await renderSidebar();
     const title = titleBySlug[slug] ?? slug;
-    const html = layoutWithSidebar({
+    const html = await layoutWithSidebar({
       title: `${title} — ${config.siteName}`,
       user: c.get("user") ?? null,
       currentSection: sectionKey[slug],
@@ -169,7 +161,7 @@ for (const slug of Object.keys(categorySections)) {
     const { items, total } = await getTopicsByCategory(slug, page, config.pageSize);
     const sidebar = await renderSidebar();
     const title = titleBySlug[slug] ?? slug;
-    const html = layoutWithSidebar({
+    const html = await layoutWithSidebar({
       title: `${title} — ${config.siteName}`,
       user: c.get("user") ?? null,
       currentSection: sectionKey[slug],
@@ -200,7 +192,7 @@ app.get("/topics/:id/:slug", async (c) => {
   if (!topic) return c.notFound();
 
   const [sidebar, comments] = await Promise.all([renderSidebar(), getComments(id)]);
-  const html = layoutWithSidebar({
+  const html = await layoutWithSidebar({
     title: `${topic.title} — ${config.siteName}`,
     description: topic.body.replace(/<[^>]*>/g, "").slice(0, 160),
     user: c.get("user") ?? null,
@@ -246,7 +238,7 @@ app.get("/public/all_topics/", async (c) => {
   const page = Number(c.req.query("page")) || 1;
   const { items, total } = await getTopicsByCategory(undefined, page, config.pageSize);
   const sidebar = await renderSidebar();
-  const html = layoutWithSidebar({
+  const html = await layoutWithSidebar({
     title: `Все топики — ${config.siteName}`,
     user: c.get("user") ?? null,
     currentSection: "news",

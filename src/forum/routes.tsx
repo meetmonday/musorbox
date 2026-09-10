@@ -65,7 +65,7 @@ async function renderForumPage(c: any, opts: { tag?: string; page?: number; titl
   const totalPages = Math.max(1, Math.ceil(threads.total / perPage));
   const threadCountText = `${threads.total} ${pluralize(threads.total, "тема", "темы", "тем")}`;
 
-  const html = layoutWithSidebar({
+  const html = await layoutWithSidebar({
     title: opts.title,
     user: c.get("user") ?? null,
     currentSection: "forum",

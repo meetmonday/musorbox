@@ -2,6 +2,8 @@ import type { FC } from "hono/jsx";
 import { Header, type LayoutUser } from "./header";
 import { Footer } from "./footer";
 import { config } from "../core/config";
+import { FeaturedCarousel } from "../topics/components";
+import { getFeaturedTopics } from "../topics/service";
 
 export type LayoutProps = {
   title: string;
@@ -10,6 +12,7 @@ export type LayoutProps = {
   children: unknown;
   sidebar?: unknown;
   currentSection?: string;
+  featured?: unknown;
 };
 
 const sectionLinks: Record<string, string> = {
@@ -34,6 +37,7 @@ export const Layout: FC<LayoutProps> = ({
   children,
   sidebar,
   currentSection,
+  featured,
 }) => {
   const curSection = currentSection ? sectionLinks[currentSection] : undefined;
   return (
@@ -52,6 +56,7 @@ export const Layout: FC<LayoutProps> = ({
       <body>
         <Header user={user} />
         <div class="div_layout">
+          {featured}
           {children}
           <div class="div_bottom_spacer" style="height:30px"> </div>
         </div>
@@ -61,14 +66,24 @@ export const Layout: FC<LayoutProps> = ({
   );
 };
 
-export function renderPage(props: LayoutProps) {
-  return <Layout {...props} />;
+async function withFeatured(props: LayoutProps) {
+  const featured = await getFeaturedTopics(5);
+  return (
+    <Layout {...props} featured={<FeaturedCarousel items={featured} />}>
+      {props.children}
+    </Layout>
+  );
 }
 
-export function layoutWithSidebar(props: LayoutProps) {
+export async function renderPage(props: LayoutProps) {
+  return withFeatured(props);
+}
+
+export async function layoutWithSidebar(props: LayoutProps) {
   const { sidebar, children, ...rest } = props;
+  const featured = await getFeaturedTopics(5);
   return (
-    <Layout {...rest}>
+    <Layout {...rest} featured={<FeaturedCarousel items={featured} />}>
       <div class="div_table ad2">
         <div class="div_row ad2">
           <div class="div_cell div_page_left ad2">{children}</div>
