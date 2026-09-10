@@ -20,6 +20,7 @@ app.use("*", logger());
 app.use("*", sessionMiddleware);
 app.use("/css/*", serveStatic({ root: "./public" }));
 app.use("/images/*", serveStatic({ root: "./public" }));
+app.use("/img/*", serveStatic({ root: "./public" }));
 app.use("/js/*", serveStatic({ root: "./public" }));
 app.use("/avatars/*", serveStatic({ root: "./public" }));
 

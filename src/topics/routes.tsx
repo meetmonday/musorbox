@@ -9,6 +9,7 @@ import {
   getRecentTopics,
   getRecentDiscussions,
   getLeaderboard,
+  getHotTopics,
 } from "./service";
 import {
   TopicCard,
@@ -17,7 +18,12 @@ import {
   Leaderboard,
   Pagination,
 } from "./components";
-import { RecentDiscussions, NewOnSite, SidebarAd } from "../sidebar/components";
+import {
+  RecentDiscussions,
+  NewOnSite,
+  HotTopics,
+  SidebarAd,
+} from "../sidebar/components";
 import { CommentList, CommentForm } from "../comments/components";
 import { getComments, addComment } from "../comments/service";
 
@@ -52,13 +58,15 @@ const titleBySlug: Record<string, string> = {
 };
 
 async function renderSidebar() {
-  const [discussions, recent] = await Promise.all([
+  const [hot, discussions, recent] = await Promise.all([
+    getHotTopics(8),
     getRecentDiscussions(8),
     getRecentTopics(8),
   ]);
   return (
     <div>
       <SidebarAd />
+      <HotTopics items={hot} />
       <RecentDiscussions items={discussions} />
       <NewOnSite items={recent} />
     </div>

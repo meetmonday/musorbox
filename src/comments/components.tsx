@@ -2,7 +2,11 @@ import type { FC } from "hono/jsx";
 import type { TopicComment } from "./service";
 import { formatDate } from "../core/utils";
 
-export const CommentItem: FC<{ comment: TopicComment }> = ({ comment }) => (
+const CommentNode: FC<{
+  comment: TopicComment;
+  childrenComments: TopicComment[];
+  childrenMap: Map<number, TopicComment[]>;
+}> = ({ comment, childrenComments, childrenMap }) => (
   <div id={`div_comment_${comment.id}`} class="div_comment">
     <div class="div_avatar_small">
       {comment.authorAvatar ? (
@@ -20,7 +24,9 @@ export const CommentItem: FC<{ comment: TopicComment }> = ({ comment }) => (
         <tr>
           <td style="background: #999999; padding: 0px 5px; color:#fff">–</td>
           <td>
-            <div class="div_comment_votes_current div_vote_zero">{comment.votesUp - comment.votesDown}</div>
+            <div class="div_comment_votes_current div_vote_zero">
+              {comment.votesUp - comment.votesDown}
+            </div>
           </td>
           <td style="background: #1FB6F2; padding: 0px 5px; color:#fff">+</td>
         </tr>
@@ -39,17 +45,42 @@ export const CommentItem: FC<{ comment: TopicComment }> = ({ comment }) => (
       <div id={`div_new_comment_${comment.id}`} class="div_new_comment clear">
         <a href={`/topics/${comment.topicId}/#div_new_comment_0`}>Ответить</a>
       </div>
+      {childrenComments.map((c) => (
+        <CommentNode
+          key={c.id}
+          comment={c}
+          childrenComments={childrenMap.get(c.id) ?? []}
+          childrenMap={childrenMap}
+        />
+      ))}
     </div>
   </div>
 );
 
-export const CommentList: FC<{ comments: TopicComment[] }> = ({ comments }) => (
-  <div>
-    {comments.map((c) => (
-      <CommentItem key={c.id} comment={c} />
-    ))}
-  </div>
-);
+export const CommentList: FC<{ comments: TopicComment[] }> = ({ comments }) => {
+  const childrenMap = new Map<number, TopicComment[]>();
+  for (const c of comments) {
+    const key = c.parentId;
+    if (key !== null) {
+      const list = childrenMap.get(key) ?? [];
+      list.push(c);
+      childrenMap.set(key, list);
+    }
+  }
+  const roots = comments.filter((c) => c.parentId === null);
+  return (
+    <div>
+      {roots.map((c) => (
+        <CommentNode
+          key={c.id}
+          comment={c}
+          childrenComments={childrenMap.get(c.id) ?? []}
+          childrenMap={childrenMap}
+        />
+      ))}
+    </div>
+  );
+};
 
 export const CommentForm: FC<{ topicId: number; loggedIn: boolean }> = ({ topicId, loggedIn }) => (
   <div id="div_new_comment_0" class="div_new_comment clear">

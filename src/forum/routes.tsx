@@ -4,8 +4,8 @@ import type { UserContext } from "../core/middleware";
 import { layoutWithSidebar } from "../layout/layout";
 import { getForumThreads, getForumTags, getTagBySlugPublic } from "./service";
 import { ThreadList, ForumPagination, TagFilter } from "./components";
-import { RecentDiscussions, NewOnSite, SidebarAd } from "../sidebar/components";
-import { getRecentDiscussions, getRecentTopics } from "../topics/service";
+import { RecentDiscussions, NewOnSite, HotTopics, SidebarAd } from "../sidebar/components";
+import { getHotTopics, getRecentDiscussions, getRecentTopics } from "../topics/service";
 import { formatDate, pluralize } from "../core/utils";
 
 const app = new Hono<{ Variables: UserContext }>();
@@ -39,13 +39,15 @@ function tagTitle(tag: string): string {
 }
 
 async function renderSidebar() {
-  const [discussions, recent] = await Promise.all([
-    getRecentDiscussions(8),
-    getRecentTopics(8),
+  const [hot, discussions, recent] = await Promise.all([
+    getHotTopics(6),
+    getRecentDiscussions(6),
+    getRecentTopics(6),
   ]);
   return (
     <div>
       <SidebarAd />
+      <HotTopics items={hot} />
       <RecentDiscussions items={discussions} />
       <NewOnSite items={recent} />
     </div>

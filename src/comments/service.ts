@@ -64,7 +64,10 @@ export async function addComment(opts: {
     .returning({ id: comments.id });
   await db
     .update(topics)
-    .set({ commentCount: sql`${topics.commentCount} + 1` })
+    .set({
+      commentCount: sql`${topics.commentCount} + 1`,
+      updatedAt: new Date(),
+    })
     .where(eq(topics.id, opts.topicId));
   return ids[0]?.id ?? 0;
 }

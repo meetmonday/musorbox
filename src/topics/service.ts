@@ -169,7 +169,7 @@ export async function getFeaturedTopics(limit: number = 5): Promise<TopicListIte
   return items;
 }
 
-export async function getRecentTopics(limit: number = 8): Promise<TopicListItem[]> {
+export async function getRecentTopics(limit: number = 8): Promise<SidebarTopic[]> {
   const db = getDrizzle();
   const rows = await db
     .select(topicSelect)
@@ -180,22 +180,135 @@ export async function getRecentTopics(limit: number = 8): Promise<TopicListItem[
     .limit(limit);
   const items = rows.map(mapTopicRow);
   await attachTags(items);
-  return items;
+  return withLastCommenters(items);
 }
 
-export async function getRecentDiscussions(limit: number = 8): Promise<
-  (TopicListItem & { lastCommenter: string; lastCommenterAvatar: string | null })[]
+export type SidebarTopic = TopicListItem & {
+  replier: string | null;
+  replierAvatar: string | null;
+  replierSubject: string;
+};
+
+async function lastReplyMap(
+  topicIds: number[],
+  topicAuthorByTopic: Map<number, string>,
+): Promise<
+  Map<
+    number,
+    { replier: string | null; replierAvatar: string | null; subject: string }
+  >
 > {
+  const result = new Map<
+    number,
+    { replier: string | null; replierAvatar: string | null; subject: string }
+  >();
+  if (topicIds.length === 0) return result;
+  const db = getDrizzle();
+
+  const placeholders = sql.join(topicIds.map((id) => sql`${id}`), sql`, `);
+  const lastComments = await db
+    .select({
+      id: comments.id,
+      topicId: comments.topicId,
+      parentId: comments.parentId,
+      replier: users.username,
+      replierAvatar: users.avatarUrl,
+    })
+    .from(comments)
+    .innerJoin(users, eq(users.id, comments.authorId))
+    .where(
+      sql`${comments.id} IN (SELECT MAX(id) FROM comments WHERE ${comments.topicId} IN (${placeholders}) GROUP BY ${comments.topicId})`,
+    );
+
+  const parentIds = lastComments
+    .map((c) => c.parentId)
+    .filter((p): p is number => p !== null);
+  let parentAuthorByComment = new Map<number, string>();
+  if (parentIds.length > 0) {
+    const parentRows = await db
+      .select({ id: comments.id, username: users.username })
+      .from(comments)
+      .innerJoin(users, eq(users.id, comments.authorId))
+      .where(
+        sql`${comments.id} IN (${sql.join(parentIds.map((id) => sql`${id}`), sql`, `)})`,
+      );
+    parentAuthorByComment = new Map(parentRows.map((r) => [r.id, r.username]));
+  }
+
+  for (const c of lastComments) {
+    const subject =
+      c.parentId !== null
+        ? parentAuthorByComment.get(c.parentId) ?? topicAuthorByTopic.get(c.topicId) ?? ""
+        : topicAuthorByTopic.get(c.topicId) ?? "";
+    result.set(c.topicId, {
+      replier: c.replier,
+      replierAvatar: c.replierAvatar,
+      subject,
+    });
+  }
+  return result;
+}
+
+async function withLastCommenters(
+  items: TopicListItem[],
+): Promise<SidebarTopic[]> {
+  const authorByTopic = new Map(items.map((i) => [i.id, i.authorUsername]));
+  const map = await lastReplyMap(
+    items.map((i) => i.id),
+    authorByTopic,
+  );
+  return items.map((i) => {
+    const info = map.get(i.id);
+    return {
+      ...i,
+      replier: info?.replier ?? null,
+      replierAvatar: info?.replierAvatar ?? null,
+      replierSubject: info?.subject ?? i.authorUsername,
+    };
+  });
+}
+
+export async function getHotTopics(limit: number = 8): Promise<SidebarTopic[]> {
   const db = getDrizzle();
   const rows = await db
-    .select({ ...topicSelect, lastCommenter: users.username, lastCommenterAvatar: users.avatarUrl })
+    .select(topicSelect)
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
     .innerJoin(users, eq(users.id, topics.authorId))
     .where(sql`${topics.commentCount} > 0`)
-    .orderBy(desc(topics.updatedAt), desc(topics.commentCount))
+    .orderBy(desc(topics.commentCount), desc(topics.votesUp))
     .limit(limit);
-  return rows.map((r) => ({ ...mapTopicRow(r), lastCommenter: r.lastCommenter, lastCommenterAvatar: r.lastCommenterAvatar }));
+  const items = rows.map(mapTopicRow);
+  await attachTags(items);
+  return withLastCommenters(items);
+}
+
+export async function getRecentDiscussions(limit: number = 8): Promise<SidebarTopic[]> {
+  const db = getDrizzle();
+  const latestIds = await db
+    .select({ topicId: comments.topicId })
+    .from(comments)
+    .groupBy(comments.topicId)
+    .orderBy(desc(sql`max(${comments.id})`))
+    .limit(limit);
+  if (latestIds.length === 0) return [];
+
+  const ids = latestIds.map((r) => r.topicId);
+  const rows = await db
+    .select(topicSelect)
+    .from(topics)
+    .innerJoin(categories, eq(categories.id, topics.categoryId))
+    .innerJoin(users, eq(users.id, topics.authorId))
+    .where(sql`${topics.id} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+  const byId = new Map(rows.map((r) => [r.topics_id, r] as const));
+  const ordered: Omit<TopicRow, "tags">[] = [];
+  for (const id of ids) {
+    const r = byId.get(id);
+    if (r) ordered.push(r);
+  }
+  const items = ordered.map(mapTopicRow);
+  await attachTags(items);
+  return withLastCommenters(items);
 }
 
 export async function getLeaderboard(): Promise<{
