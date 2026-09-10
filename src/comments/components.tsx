@@ -154,6 +154,7 @@ export const CommentForm: FC<{ topicId: number; loggedIn: boolean }> = ({
           id="frm_new_comment"
           data-topic-id={topicId}
           action={`/topics/${topicId}/add_comment/`}
+          style="display:none"
         >
           <input type="hidden" name="parent_id" value="0" />
           <textarea

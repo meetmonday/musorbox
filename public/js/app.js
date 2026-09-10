@@ -58,13 +58,22 @@ window.show_add_comment_form = function (commentId) {
     location.href = "/login";
     return;
   }
+  var parentInput = form.querySelector('input[name="parent_id"]');
+  var currentParent = parentInput ? parentInput.value : "0";
+  var visible = form.style.display !== "none";
+
+  if (commentId === 0 && currentParent === "0" && visible) {
+    form.style.display = "none";
+    return;
+  }
+
   var target = document.getElementById("div_new_comment_" + commentId);
   if (!target) return;
   if (form.parentNode) form.parentNode.removeChild(form);
-  form.getElementsByName("parent_id")[0].value = commentId;
+  if (parentInput) parentInput.value = commentId;
   target.appendChild(form);
-  var ta = form.getElementsByTagName("textarea")[0];
   form.style.display = "";
+  var ta = form.getElementsByTagName("textarea")[0];
   if (ta) {
     ta.focus();
     var y = ta.getBoundingClientRect().top + window.scrollY - 80;
@@ -81,7 +90,8 @@ document.addEventListener("submit", function (e) {
   var body = ta.value.trim();
   if (!body) return;
   var topicId = form.getAttribute("data-topic-id");
-  var parentId = form.getElementsByName("parent_id")[0].value;
+  var parentInput = form.querySelector('input[name="parent_id"]');
+  var parentId = parentInput ? parentInput.value : "0";
   var url =
     "/topics/" + topicId + "/add_comment/" + (parentId && parentId !== "0" ? parentId + "/" : "");
   var submitBtn = form.querySelector("button[type=submit]");
@@ -118,6 +128,7 @@ document.addEventListener("submit", function (e) {
       ta.value = "";
       if (form.parentNode) form.parentNode.removeChild(form);
       home.appendChild(form);
+      form.style.display = "none";
       if (submitBtn) submitBtn.disabled = false;
       var cnt = document.querySelector(".div_topic_discuss_count");
       if (cnt) cnt.textContent = (parseInt(cnt.textContent, 10) || 0) + 1;
