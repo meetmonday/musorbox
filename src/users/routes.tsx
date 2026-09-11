@@ -16,7 +16,7 @@ import { RecentDiscussions, NewOnSite, HotTopics, SidebarAd } from "../sidebar/c
 import { getHotTopics, getRecentDiscussions, getRecentTopics } from "../topics/service";
 import { pluralize } from "../core/utils";
 
-const app = new Hono<{ Variables: UserContext }>();
+const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
 const perPage = 20;
 
@@ -89,17 +89,13 @@ async function handleProfileEdit(c: AppContext) {
 }
 
 app.get("/users/:username", handleProfile);
-app.get("/users/:username/", handleProfile);
-
 app.post("/users/:username", handleProfileEdit);
-app.post("/users/:username/", handleProfileEdit);
-
 app.get("/user_topics/:username", getTopicsPage);
-app.get("/user_topics/:username/", getTopicsPage);
+app.get("/user_topics/:username/page_topics/:page", getTopicsPage);
 
 async function getTopicsPage(c: AppContext) {
   const username = c.req.param("username") as string;
-  const page = Number(c.req.query("page") ?? 1) || 1;
+  const page = Number(c.req.query("page") ?? c.req.param("page")) || 1;
   const profile = await getUserByUsername(username);
   if (!profile) return c.notFound();
 

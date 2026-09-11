@@ -10,12 +10,14 @@ import authRoutes from "./auth/routes";
 import forumRoutes from "./forum/routes";
 import votesRoutes from "./votes/routes";
 import usersRoutes from "./users/routes";
+import editorRoutes from "./editor/routes";
+import pagesRoutes from "./pages/routes";
 
 type AppEnv = {
   Variables: UserContext;
 };
 
-const app = new Hono<AppEnv>();
+const app = new Hono<AppEnv>({ strict: false });
 
 app.use("*", logger());
 app.use("*", sessionMiddleware);
@@ -24,12 +26,16 @@ app.use("/images/*", serveStatic({ root: "./public" }));
 app.use("/img/*", serveStatic({ root: "./public" }));
 app.use("/js/*", serveStatic({ root: "./public" }));
 app.use("/avatars/*", serveStatic({ root: "./public" }));
+app.use("/Bredacture/*", serveStatic({ root: "./public" }));
+app.use("/uploads/*", serveStatic({ root: "./public" }));
 
 app.route("/", topicsRoutes);
 app.route("/", authRoutes);
 app.route("/", forumRoutes);
 app.route("/", votesRoutes);
 app.route("/", usersRoutes);
+app.route("/", editorRoutes);
+app.route("/", pagesRoutes);
 
 app.all("*", (c) => c.text("Not found", 404));
 

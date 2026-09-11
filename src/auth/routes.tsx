@@ -5,7 +5,7 @@ import type { UserContext } from "../core/middleware";
 import { login, logout, register } from "./service";
 import { renderPage } from "../layout/layout";
 
-const app = new Hono<{ Variables: UserContext }>();
+const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));

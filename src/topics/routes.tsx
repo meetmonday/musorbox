@@ -23,9 +23,10 @@ import {
   SidebarAd,
 } from "../sidebar/components";
 import { CommentFragment, CommentList, CommentForm } from "../comments/components";
-import { getComments, addComment, getCommentById } from "../comments/service";
+import { getComments, addComment, getCommentById, getCommentChildrenCount, deleteComment } from "../comments/service";
+import { deleteTopic } from "./service";
 
-const app = new Hono<{ Variables: UserContext }>();
+const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
 const categorySections = {
   b_news: "news",
@@ -92,7 +93,7 @@ app.get("/", async (c) => {
           page={page}
           total={total}
           perPage={config.mainPageSize}
-          basePath="/page_topics"
+          basePath=""
         />
       </div>
     ),
@@ -100,7 +101,7 @@ app.get("/", async (c) => {
   return c.html(`<!DOCTYPE html>${html}`);
 });
 
-app.get("/page_topics/:page/", async (c) => {
+app.get("/page_topics/:page", async (c) => {
   const page = Number(c.req.param("page")) || 1;
   const { items, total } = await getTopicsByCategory(undefined, page, config.mainPageSize);
   const sidebar = await renderSidebar();
@@ -119,7 +120,7 @@ app.get("/page_topics/:page/", async (c) => {
           page={page}
           total={total}
           perPage={config.mainPageSize}
-          basePath="/page_topics"
+          basePath=""
         />
       </div>
     ),
@@ -128,7 +129,7 @@ app.get("/page_topics/:page/", async (c) => {
 });
 
 for (const slug of Object.keys(categorySections)) {
-  app.get(`/public/${slug}/`, async (c) => {
+  app.get(`/public/${slug}`, async (c) => {
     const { items, total } = await getTopicsByCategory(slug, 1, config.pageSize);
     const sidebar = await renderSidebar();
     const title = titleBySlug[slug] ?? slug;
@@ -156,7 +157,7 @@ for (const slug of Object.keys(categorySections)) {
     return c.html(`<!DOCTYPE html>${html}`);
   });
 
-  app.get(`/public/${slug}/page_topics/:page/`, async (c) => {
+  app.get(`/public/${slug}/page_topics/:page`, async (c) => {
     const page = Number(c.req.param("page")) || 1;
     const { items, total } = await getTopicsByCategory(slug, page, config.pageSize);
     const sidebar = await renderSidebar();
@@ -191,6 +192,11 @@ app.get("/topics/:id/:slug", async (c) => {
   const topic = await getTopicBySlug(id, slug);
   if (!topic) return c.notFound();
 
+  const me = c.get("user");
+  const canDeleteTopic = Boolean(me && (topic.authorId === me.id || me.role !== "user"));
+  const canDeleteComments = Boolean(me && me.role !== "user");
+  const currentUserId = me?.id ?? null;
+
   const [sidebar, comments] = await Promise.all([renderSidebar(), getComments(id)]);
   const html = await layoutWithSidebar({
     title: `${topic.title} — ${config.siteName}`,
@@ -200,10 +206,14 @@ app.get("/topics/:id/:slug", async (c) => {
     sidebar,
     children: (
       <div>
-        <TopicDetailView topic={topic} />
+        <TopicDetailView topic={topic} canDelete={canDeleteTopic} />
         <a name="comments" />
         <div id="div_comments_0">
-          <CommentList comments={comments} />
+          <CommentList
+            comments={comments}
+            canDelete={canDeleteComments}
+            currentUserId={currentUserId}
+          />
           <CommentForm topicId={topic.id} loggedIn={Boolean(c.get("user"))} />
         </div>
       </div>
@@ -212,12 +222,12 @@ app.get("/topics/:id/:slug", async (c) => {
   return c.html(`<!DOCTYPE html>${html}`);
 });
 
-app.post("/topics/:id/add_comment/", (c) => {
+app.post("/topics/:id/add_comment", (c) => {
   const user = c.get("user");
   return postComment(c, user, null);
 });
 
-app.post("/topics/:id/add_comment/:parentId/", (c) => {
+app.post("/topics/:id/add_comment/:parentId", (c) => {
   const user = c.get("user");
   return postComment(c, user, Number(c.req.param("parentId")) || null);
 });
@@ -248,14 +258,43 @@ async function postComment(c: any, user: any, parentId: number | null) {
   if (xhr) {
     const fresh = await getCommentById(commentId);
     let html = "";
-    if (fresh) html = String(<CommentFragment comment={fresh} />);
+    const canDel = user.role !== "user";
+    if (fresh) html = String(<CommentFragment comment={fresh} canDelete={canDel} currentUserId={user.id} />);
     return c.json({ ok: true, html, parentId });
   }
   return c.redirect(`/topics/${id}/${topic.slug}#div_comments_0`);
 }
 
-app.get("/public/all_topics/", async (c) => {
-  const page = Number(c.req.query("page")) || 1;
+app.post("/topics/:id/delete_comment/:commentId", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/login");
+  const id = Number(c.req.param("id")) || 0;
+  const commentId = Number(c.req.param("commentId")) || 0;
+  const topic = await getTopicBySlug(id);
+  if (!topic) return c.notFound();
+  const comment = await getCommentById(commentId);
+  if (!comment || comment.topicId !== id) return c.notFound();
+  const canModerate = comment.authorId === user.id || user.role !== "user";
+  if (!canModerate) return c.text("Forbidden", 403);
+  const replies = await getCommentChildrenCount(commentId);
+  if (replies > 0) return c.redirect(`/topics/${id}/${topic.slug}#div_comments_0`);
+  await deleteComment(commentId, id);
+  return c.redirect(`/topics/${id}/${topic.slug}#div_comments_0`);
+});
+
+app.post("/topics/:id/delete", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/login");
+  const id = Number(c.req.param("id")) || 0;
+  const topic = await getTopicBySlug(id);
+  if (!topic) return c.notFound();
+  const canModerate = topic.authorId === user.id || user.role !== "user";
+  if (!canModerate) return c.text("Forbidden", 403);
+  await deleteTopic(id);
+  return c.redirect(`/public/${topic.categorySlug}/`);
+});
+
+async function renderAllTopics(c: any, page: number) {
   const { items, total } = await getTopicsByCategory(undefined, page, config.pageSize);
   const sidebar = await renderSidebar();
   const html = await layoutWithSidebar({
@@ -274,7 +313,12 @@ app.get("/public/all_topics/", async (c) => {
     ),
   });
   return c.html(`<!DOCTYPE html>${html}`);
-});
+}
+
+app.get("/public/all_topics", (c) => renderAllTopics(c, Number(c.req.query("page")) || 1));
+app.get("/public/all_topics/page_topics/:page", (c) =>
+  renderAllTopics(c, Number(c.req.param("page")) || 1),
+);
 
 void titleBySlug;
 

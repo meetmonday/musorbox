@@ -8,7 +8,7 @@ import { RecentDiscussions, NewOnSite, HotTopics, SidebarAd } from "../sidebar/c
 import { getHotTopics, getRecentDiscussions, getRecentTopics } from "../topics/service";
 import { formatDate, pluralize } from "../core/utils";
 
-const app = new Hono<{ Variables: UserContext }>();
+const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
 const perPage = 20;
 
@@ -110,13 +110,13 @@ async function renderForumPage(c: any, opts: { tag?: string; page?: number; titl
   return c.html(`<!DOCTYPE html>${html}`);
 }
 
-app.get("/public/b_questions/", async (c) => {
+app.get("/public/b_questions", async (c) => {
   return renderForumPage(c, {
     title: `Форум — ${config.siteName}`,
   });
 });
 
-app.get("/public/b_questions/page_topics/:page/", async (c) => {
+app.get("/public/b_questions/page_topics/:page", async (c) => {
   const page = Number(c.req.param("page")) || 1;
   return renderForumPage(c, {
     page,
@@ -124,7 +124,7 @@ app.get("/public/b_questions/page_topics/:page/", async (c) => {
   });
 });
 
-app.get("/public/b_questions/tags/:tag/", async (c) => {
+app.get("/public/b_questions/tags/:tag", async (c) => {
   const tag = c.req.param("tag");
   const tagObj = await getTagBySlugPublic(tag);
   if (!tagObj) return c.notFound();
@@ -134,7 +134,7 @@ app.get("/public/b_questions/tags/:tag/", async (c) => {
   });
 });
 
-app.get("/public/b_questions/tags/:tag/page_topics/:page/", async (c) => {
+app.get("/public/b_questions/tags/:tag/page_topics/:page", async (c) => {
   const tag = c.req.param("tag");
   const page = Number(c.req.param("page")) || 1;
   const tagObj = await getTagBySlugPublic(tag);

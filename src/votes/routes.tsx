@@ -5,7 +5,7 @@ import { votes, topics, comments } from "../core/schema";
 import type { UserContext } from "../core/middleware";
 import { requireAuth } from "../core/middleware";
 
-const app = new Hono<{ Variables: UserContext }>();
+const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
 type VoteResponse = { ok: true; up: number; down: number } | { ok: false; error: string };
 
@@ -56,7 +56,7 @@ async function castVote(
   return { ok: true, up, down };
 }
 
-app.post("/topics/:id/vote/", requireAuth, async (c) => {
+app.post("/topics/:id/vote", requireAuth, async (c) => {
   const body = await c.req.parseBody();
   const value = body.value === "down" ? -1 : 1;
   const id = Number(c.req.param("id")) || 0;
@@ -64,7 +64,7 @@ app.post("/topics/:id/vote/", requireAuth, async (c) => {
   return c.json(result);
 });
 
-app.post("/comments/:id/vote/", requireAuth, async (c) => {
+app.post("/comments/:id/vote", requireAuth, async (c) => {
   const body = await c.req.parseBody();
   const value = body.value === "down" ? -1 : 1;
   const id = Number(c.req.param("id")) || 0;
