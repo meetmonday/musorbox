@@ -161,7 +161,6 @@ export async function getFeaturedTopics(limit: number = 5): Promise<TopicListIte
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
     .innerJoin(users, eq(users.id, topics.authorId))
-    .where(sql`${topics.leadImage} IS NOT NULL`)
     .orderBy(desc(topics.commentCount))
     .limit(limit);
   const items = rows.map(mapTopicRow);

@@ -4,6 +4,19 @@ import { slugify } from "./utils";
 import { hash } from "bcryptjs";
 import { eq } from "drizzle-orm";
 
+const seedLeadColors = ["#1FB6F2", "#e67e22", "#27ae60", "#8e44ad", "#c0392b", "#16a085", "#2c3e50"];
+
+function svgLead(color: string): string {
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='240'>` +
+    `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
+    `<stop offset='0' stop-color='${color}'/>` +
+    `<stop offset='1' stop-color='#2c3e50' stop-opacity='0.85'/></linearGradient></defs>` +
+    `<rect width='600' height='240' fill='url(#g)'/>` +
+    `</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 const db = getDrizzle();
 
 async function seed() {
@@ -296,7 +309,7 @@ async function seed() {
       body: t.body,
       categoryId: catById[t.category]!,
       authorId: userById[t.author]! ?? userById["demo"]!,
-      leadImage: null,
+      leadImage: t.category === "b_questions" ? null : svgLead(seedLeadColors[i % seedLeadColors.length]!),
       votesUp: t.votesUp,
       votesDown: t.votesDown,
       createdAt,

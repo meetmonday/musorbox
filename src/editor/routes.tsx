@@ -149,7 +149,7 @@ async function handleSubmit(c: any) {
     body,
     categoryId: category.id,
     authorId: user.id,
-    leadImage: null,
+    leadImage: firstImageSrc(body),
     tagIds: allowedTags,
   });
   return c.redirect(`/topics/${id}/${slug}`);

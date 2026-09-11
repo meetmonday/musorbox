@@ -186,23 +186,26 @@ export const FeaturedCarousel: FC<{ items: TopicListItem[] }> = ({ items }) => (
         <div id="div_top_news_caption" class="white">
           Интересное
         </div>
-        {items.map((t) => (
-          <div class="div_cell div_top_news_b1" key={t.id}>
-            <a
-              class="div_top_news_b2"
-              href={topicUrl(t)}
-              style={
-                t.leadImage
-                  ? `background: url(${t.leadImage}) no-repeat center center; background-size: cover;`
-                  : `background: url(/img/blank-dark.png) #e7e7e7 no-repeat center center;`
-              }
-            >
-              <div class="div_top_news_text" align="center">
-                <span>{t.title}</span>
-              </div>
-            </a>
-          </div>
-        ))}
+        {items.map((t) => {
+          const img = cardImage(t);
+          return (
+            <div class="div_cell div_top_news_b1" key={t.id}>
+              <a
+                class="div_top_news_b2"
+                href={topicUrl(t)}
+                style={
+                  img
+                    ? `background: url(${img}) no-repeat center center; background-size: cover;`
+                    : `background: #e7e7e7 no-repeat center center;`
+                }
+              >
+                <div class="div_top_news_text" align="center">
+                  <span>{t.title}</span>
+                </div>
+              </a>
+            </div>
+          );
+        })}
       </div>
     </div>
   </noindex>
