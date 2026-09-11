@@ -5,6 +5,6 @@ export default defineConfig({
   schema: "./src/core/schema.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: process.env.DB_PATH ?? "./trashbox.db",
+    url: process.env.DB_PATH ?? "./musorbox.db",
   },
 });

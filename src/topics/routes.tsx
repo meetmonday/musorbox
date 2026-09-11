@@ -79,7 +79,7 @@ app.get("/", async (c) => {
 
   const html = await layoutWithSidebar({
     title: `Главная — ${config.siteName}`,
-    description: `${config.siteName} — лучший мобильный портал. Новости, программы, обзоры.`,
+    description: `${config.siteName} — ${config.siteTagline}. Новости, программы, обзоры.`,
     user: c.get("user") ?? null,
     currentSection: "news",
     sidebar,

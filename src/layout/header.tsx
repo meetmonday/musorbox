@@ -1,4 +1,5 @@
 import type { FC } from "hono/jsx";
+import { config } from "../core/config";
 
 export type LayoutUser = {
   id: number;
@@ -14,10 +15,10 @@ export const LogoHeader: FC = () => (
         <h2 id="div_top_logo_header1" class="h1">
           <a href="/" class="black">
             <img src="/images/blank.gif" id="img_top_logo" alt="" />
-            <span>Trashbox.ru</span>
+            <span>MusorBox</span>
           </a>
         </h2>
-        <h3 id="div_top_logo_header2">лучший мобильный портал</h3>
+        <h3 id="div_top_logo_header2">{config.siteTagline}</h3>
       </nobr>
     </div>
     <div id="div_top_search2" class="adh0 adhs2">
@@ -107,7 +108,7 @@ export const LogoMenu: FC = () => (
                   <a href="/public/users/" class="first">Конкурсы</a>
                 </h3>
                 <h3>
-                  <a href="/public/trashcast/">Трешкаст</a>
+                  <a href="/public/podcasts/">Подкасты</a>
                 </h3>
               </div>
               <div class="div_top_menu_b2">

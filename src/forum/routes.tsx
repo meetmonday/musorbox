@@ -32,7 +32,7 @@ function tagTitle(tag: string): string {
     quest_programms: "Программы",
     quest_firmware: "Прошивка",
     quest_themes: "Темы",
-    quest_trashbox: "Трешбокс",
+    quest_about: "О сайте",
     quest_convert: "Конвертирование",
   };
   return map[tag] ?? tag;

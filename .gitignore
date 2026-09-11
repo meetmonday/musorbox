@@ -16,7 +16,7 @@ build/
 *.sqlite
 *.db-wal
 *.db-shm
-trashbox.db
+musorbox.db
 
 # Archived pages (outside repo)
 dumps

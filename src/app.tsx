@@ -40,11 +40,11 @@ app.route("/", pagesRoutes);
 app.all("*", (c) => c.text("Not found", 404));
 
 getDb();
-console.log(`[trashbox] DB initialized at ${config.dbPath}`);
+console.log(`[musorbox] DB initialized at ${config.dbPath}`);
 
 Bun.serve({
   port: config.port,
   fetch: app.fetch,
 });
 
-console.log(`[trashbox] serving on http://localhost:${config.port}`);
+console.log(`[musorbox] serving on http://localhost:${config.port}`);

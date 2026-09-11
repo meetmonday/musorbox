@@ -1,5 +1,5 @@
 {
-  "name": "trashbox",
+  "name": "musorbox",
   "module": "src/app.tsx",
   "type": "module",
   "private": true,

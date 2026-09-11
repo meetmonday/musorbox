@@ -8,6 +8,13 @@
       "when": 1788972436139,
       "tag": "0000_organic_moondragon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789156129436,
+      "tag": "0001_lowly_red_wolf",
+      "breakpoints": true
     }
   ]
 }

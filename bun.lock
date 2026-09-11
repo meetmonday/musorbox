@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "trashbox",
+      "name": "musorbox",
       "dependencies": {
         "bcryptjs": "^3.0.3",
         "drizzle-orm": "^0.45.2",

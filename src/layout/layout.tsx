@@ -25,7 +25,7 @@ const sectionLinks: Record<string, string> = {
   themes: "/public/themes/",
   forum: "/public/b_questions/",
   circles: "/public/circles/",
-  trashcast: "/public/trashcast/",
+  podcasts: "/public/podcasts/",
   contests: "/public/users/",
   help: "/public/help/",
   offtop: "/public/offtop/",
