@@ -2,60 +2,57 @@ import type { FC } from "hono/jsx";
 import { config } from "../core/config";
 
 export const Footer: FC = () => {
-  const year = config.copyrightStart;
+  const year = new Date().getFullYear();
   return (
     <div class="div_bottom_block">
       <div class="div_layout">
-        <div id="div_copyright_simple">
-          <div class="div_table">
-            <div class="div_row">
-              <div class="div_cell">
-                <a href="/">Trashbox.ru</a> — новости, программы и обзоры для мобильных устройств.
-              </div>
-              <div class="div_cell" style="text-align:right">
-                <span class="dark">
-                  © {year}-{new Date().getFullYear()} {config.copyrightOwner}
-                </span>
+        <div class="div_table ad2">
+          <div class="div_row ad2">
+            <div class="div_cell ad2">
+              <div id="div_copyright_simple" class="white">
+                <div class="div_table ad1" style="width:auto">
+                  <div class="div_row ad1">
+                    <div class="div_cell ad1">
+                      <noindex>
+                        <span style="font-size:14px">©</span>&nbsp;{config.copyrightStart}-{year}&nbsp;
+                        <a href="/" rel="nofollow">{config.copyrightOwner}</a>
+                        <br />
+                        <a href="/rules/" rel="nofollow">Правила сайта</a>
+                        <br />
+                      </noindex>
+                      <a href="/">
+                        <b>Мобильная версия</b>
+                      </a>
+                    </div>
+                    <div class="div_cell ad1">
+                      <noindex>
+                        <a href="/thanks/" rel="nofollow">Благодарности</a>
+                        <br />
+                        <a href="/copyright/" rel="nofollow">Правообладателям</a>
+                      </noindex>
+                    </div>
+                    <div class="div_cell ad1">
+                      <a href="/advertising/" rel="nofollow">
+                        Реклама, обзоры<br />и сотрудничество (pdf)
+                      </a>
+                      <br />
+                    </div>
+                  </div>
+                </div>
+                <div class="adh0 adhs2">
+                  <a
+                    href="#"
+                    onclick="disable_adaptive(0); return false;"
+                    rel="nofollow"
+                    class="div_bottom_button"
+                  >
+                    <b>Отключить адаптацию под&nbsp;устройство</b>
+                  </a>
+                  <br />
+                </div>
               </div>
             </div>
           </div>
-        </div>
-        <div id="div_copyright" style="clear:both">
-          <span style="padding-right:20px">
-            <a href="/rules/">Правила сайта</a>
-          </span>
-          <span style="padding-right:20px">
-            <a href="http://m.trashbox.ru">Мобильная версия</a>
-          </span>
-          <span style="padding-right:20px">
-            <a href="/thanks/">Благодарности</a>
-          </span>
-          <span style="padding-right:20px">
-            <a href="/copyright/">Правообладателям</a>
-          </span>
-          <span style="padding-right:20px">
-            <a href="/advertising/">Реклама</a>
-          </span>
-          <span style="float:right">
-            <a href="/feed_topics/1/" class="a_social_bottom" title="RSS">
-              <img src="/images/rss.png" alt="RSS" />
-            </a>
-            <a href="https://vk.com/trashbox_ru" class="a_social_bottom" title="Мы ВКонтакте">
-              <img src="/images/icons_social6.png" alt="VK" style=""
-                   onclick="return false;" />
-            </a>
-            <a href="https://twitter.com/trashbox_ru" class="a_social_bottom" title="Твиттер">
-              <img src="/images/icons_social6.png" alt="TW" style="" />
-            </a>
-            <a href="https://www.facebook.com/" class="a_social_bottom" title="Facebook">
-              <img src="/images/icons_social6.png" alt="FB" style="" />
-            </a>
-          </span>
-        </div>
-        <div class="div_server_stats">
-          <a href="/" onclick="disable_adaptive(0); return false;" style="color:#999999;font-size:1.1em">
-            Отключить адаптацию под устройство
-          </a>
         </div>
       </div>
     </div>
