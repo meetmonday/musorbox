@@ -93,3 +93,21 @@ export async function addComment(opts: {
     .where(eq(topics.id, opts.topicId));
   return ids[0]?.id ?? 0;
 }
+
+export async function getCommentChildrenCount(commentId: number): Promise<number> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ id: comments.id })
+    .from(comments)
+    .where(eq(comments.parentId, commentId));
+  return rows.length;
+}
+
+export async function deleteComment(commentId: number, topicId: number): Promise<void> {
+  const db = getDrizzle();
+  await db.delete(comments).where(eq(comments.id, commentId));
+  await db
+    .update(topics)
+    .set({ commentCount: sql`max(${topics.commentCount} - 1, 0)`, updatedAt: new Date() })
+    .where(eq(topics.id, topicId));
+}

@@ -359,3 +359,65 @@ export async function attachTags(items: TopicListItem[]): Promise<void> {
     item.tags = byTopic.get(item.id) ?? [];
   }
 }
+
+export type EditableCategory = {
+  id: number;
+  name: string;
+  slug: string;
+};
+
+export async function getEditableCategories(): Promise<EditableCategory[]> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ id: categories.id, name: categories.name, slug: categories.slug })
+    .from(categories)
+    .where(sql`${categories.slug} != 'index'`)
+    .orderBy(categories.sortOrder);
+  return rows;
+}
+
+export async function uniqueSlug(base: string): Promise<string> {
+  const db = getDrizzle();
+  for (let i = 1; i <= 1000; i++) {
+    const slug = i === 1 ? base : `${base}-${i}`;
+    const rows = await db.select({ id: topics.id }).from(topics).where(eq(topics.slug, slug)).limit(1);
+    if (!rows[0]) return slug;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+export async function createTopic(input: {
+  title: string;
+  slug: string;
+  body: string;
+  categoryId: number;
+  authorId: number;
+  leadImage: string | null;
+  tagIds: number[];
+}): Promise<number> {
+  const db = getDrizzle();
+  const now = new Date();
+  const rows = await db
+    .insert(topics)
+    .values({
+      title: input.title,
+      slug: input.slug,
+      body: input.body,
+      categoryId: input.categoryId,
+      authorId: input.authorId,
+      leadImage: input.leadImage,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning({ id: topics.id });
+  const id = rows[0]!.id;
+  if (input.tagIds.length) {
+    await db.insert(topicTags).values(input.tagIds.map((tagId) => ({ topicId: id, tagId })));
+  }
+  return id;
+}
+
+export async function deleteTopic(id: number): Promise<void> {
+  const db = getDrizzle();
+  await db.delete(topics).where(eq(topics.id, id));
+}

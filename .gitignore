@@ -21,6 +21,9 @@ trashbox.db
 # Archived pages (outside repo)
 dumps
 
+# Dump-derived site assets (extracted from the original site)
+/public/
+
 # Logs
 logs/
 *.log
@@ -28,7 +31,6 @@ npm-debug.log*
 bun-debug.log*
 
 # Uploads
-public/avatars/uploads/
 uploads/
 
 # OS

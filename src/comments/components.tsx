@@ -2,7 +2,7 @@ import type { FC } from "hono/jsx";
 import type { TopicComment } from "./service";
 import { formatDate } from "../core/utils";
 
-const CommentTop: FC<{ comment: TopicComment }> = ({ comment }) => {
+const CommentTop: FC<{ comment: TopicComment; showDelete?: boolean }> = ({ comment, showDelete }) => {
   const score = comment.votesUp - comment.votesDown;
   return (
     <>
@@ -52,6 +52,22 @@ const CommentTop: FC<{ comment: TopicComment }> = ({ comment }) => {
         </a>
         <span class="dark">, {formatDate(comment.createdAt)}</span>{" "}
         <a href={`#div_comment_${comment.id}`}>#</a>
+        {showDelete ? (
+          <form
+            method="post"
+            action={`/topics/${comment.topicId}/delete_comment/${comment.id}/`}
+            style="display:inline"
+            onsubmit="return confirm('Удалить комментарий?')"
+          >
+            <button
+              type="submit"
+              title="Удалить комментарий"
+              style="background:none;border:0;padding:0;margin-left:6px;color:#c33;cursor:pointer;font-size:1em"
+            >
+              ✕
+            </button>
+          </form>
+        ) : null}
       </div>
       <br class="clear" />
     </>
@@ -68,35 +84,53 @@ const CommentNode: FC<{
   comment: TopicComment;
   childrenComments: TopicComment[];
   childrenMap: Map<number, TopicComment[]>;
-}> = ({ comment, childrenComments, childrenMap }) => (
-  <div id={`div_comment_${comment.id}`} class="div_comment">
-    <CommentTop comment={comment} />
-    <div class="div_content_comm" id={`div_content_comm_${comment.id}`}>
-      <div class="div_text">{comment.body}</div>
-      <ReplyLink commentId={comment.id} />
-      {childrenComments.map((c) => (
-        <CommentNode
-          key={c.id}
-          comment={c}
-          childrenComments={childrenMap.get(c.id) ?? []}
-          childrenMap={childrenMap}
-        />
-      ))}
+  canDelete: boolean;
+  currentUserId: number | null;
+}> = ({ comment, childrenComments, childrenMap, canDelete, currentUserId }) => {
+  const canDeleteThis = canDelete || comment.authorId === currentUserId;
+  return (
+    <div id={`div_comment_${comment.id}`} class="div_comment">
+      <CommentTop comment={comment} showDelete={canDeleteThis && childrenComments.length === 0} />
+      <div class="div_content_comm" id={`div_content_comm_${comment.id}`}>
+        <div class="div_text" dangerouslySetInnerHTML={{ __html: comment.body }} />
+        <ReplyLink commentId={comment.id} />
+        {childrenComments.map((c) => (
+          <CommentNode
+            key={c.id}
+            comment={c}
+            childrenComments={childrenMap.get(c.id) ?? []}
+            childrenMap={childrenMap}
+            canDelete={canDelete}
+            currentUserId={currentUserId}
+          />
+        ))}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
-export const CommentFragment: FC<{ comment: TopicComment }> = ({ comment }) => (
-  <div id={`div_comment_${comment.id}`} class="div_comment">
-    <CommentTop comment={comment} />
-    <div class="div_content_comm" id={`div_content_comm_${comment.id}`}>
-      <div class="div_text">{comment.body}</div>
-      <ReplyLink commentId={comment.id} />
+export const CommentFragment: FC<{
+  comment: TopicComment;
+  canDelete?: boolean;
+  currentUserId?: number | null;
+}> = ({ comment, canDelete = false, currentUserId = null }) => {
+  const canDeleteThis = canDelete || comment.authorId === currentUserId;
+  return (
+    <div id={`div_comment_${comment.id}`} class="div_comment">
+      <CommentTop comment={comment} showDelete={canDeleteThis} />
+      <div class="div_content_comm" id={`div_content_comm_${comment.id}`}>
+        <div class="div_text" dangerouslySetInnerHTML={{ __html: comment.body }} />
+        <ReplyLink commentId={comment.id} />
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
-export const CommentList: FC<{ comments: TopicComment[] }> = ({ comments }) => {
+export const CommentList: FC<{
+  comments: TopicComment[];
+  canDelete?: boolean;
+  currentUserId?: number | null;
+}> = ({ comments, canDelete = false, currentUserId = null }) => {
   const childrenMap = new Map<number, TopicComment[]>();
   for (const c of comments) {
     const key = c.parentId;
@@ -124,6 +158,8 @@ export const CommentList: FC<{ comments: TopicComment[] }> = ({ comments }) => {
           comment={c}
           childrenComments={childrenMap.get(c.id) ?? []}
           childrenMap={childrenMap}
+          canDelete={canDelete}
+          currentUserId={currentUserId}
         />
       ))}
     </div>

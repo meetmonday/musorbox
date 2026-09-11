@@ -1,5 +1,5 @@
 import type { FC } from "hono/jsx";
-import { formatDate, replyCountText, voteBarWidths, excerpt } from "../core/utils";
+import { formatDate, replyCountText, voteBarWidths, htmlExcerpt, firstImageSrc, stripTags } from "../core/utils";
 import type { TopicListItem, TopicDetail } from "./service";
 
 export function topicUrl(t: TopicListItem | TopicDetail): string {
@@ -8,6 +8,10 @@ export function topicUrl(t: TopicListItem | TopicDetail): string {
 
 export function avatarSrc(url: string | null): string {
   return url ?? "/images/default_avatar.png";
+}
+
+function cardImage(topic: TopicListItem): string | null {
+  return topic.leadImage ?? firstImageSrc(topic.body);
 }
 
 export const Avatar: FC<{ src: string | null; size?: string; className?: string }> = ({
@@ -135,11 +139,11 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
     </table>
     <div class="div_text">
       <div class="div_full_screens">
-        {topic.leadImage ? (
+        {cardImage(topic) ? (
           <div class="div_image_news">
             <a href={topicUrl(topic)} rel="nofollow">
               <img
-                src={topic.leadImage}
+                src={cardImage(topic)!}
                 style="max-width:380px;height:auto"
                 alt={topic.title}
                 title={topic.title}
@@ -148,8 +152,8 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
           </div>
         ) : null}
       </div>
-      <div>{excerpt(topic.body, 220)}</div>
-      {topic.body.length > 220 ? (
+      <div dangerouslySetInnerHTML={{ __html: htmlExcerpt(topic.body, 220) }} />
+      {stripTags(topic.body).length > 220 ? (
         <a href={topicUrl(topic)} class="dark2" style="font-size:1.2em">
           Читать дальше →
         </a>
@@ -347,7 +351,10 @@ export const TopicMini: FC<{ topic: TopicListItem; showAuthor?: boolean; arrow?:
   </div>
 );
 
-export const TopicDetailView: FC<{ topic: TopicDetail }> = ({ topic }) => {
+export const TopicDetailView: FC<{ topic: TopicDetail; canDelete?: boolean }> = ({
+  topic,
+  canDelete = false,
+}) => {
   const isForum = topic.categoryType === "forum";
   return (
     <div class="div_topic" id={`div_topic_${topic.id}`}>
@@ -384,16 +391,16 @@ export const TopicDetailView: FC<{ topic: TopicDetail }> = ({ topic }) => {
         </tr>
       </table>
       <div class="div_text">
-        <div class="div_full_screens">
-          {topic.leadImage ? (
-            <div class="div_image_news div_image_zoom">
-              <a>
-                <img src={topic.leadImage} style="max-width:590px;height:auto" alt={topic.title} />
-              </a>
-            </div>
-          ) : null}
-        </div>
-        <div>{topic.body}</div>
+<div class="div_full_screens">
+        {topic.leadImage && firstImageSrc(topic.body) !== topic.leadImage ? (
+          <div class="div_image_news div_image_zoom">
+            <a>
+              <img src={topic.leadImage} style="max-width:590px;height:auto" alt={topic.title} />
+            </a>
+          </div>
+        ) : null}
+      </div>
+        <div dangerouslySetInnerHTML={{ __html: topic.body }} />
       </div>
       <div class="div_social3" id={`div_social3_${topic.id}`}> </div>
       <table cellpadding="0" cellspacing="0" class="div_topic_bottom">
@@ -407,6 +414,18 @@ export const TopicDetailView: FC<{ topic: TopicDetail }> = ({ topic }) => {
         </tr>
       </table>
       <div class="div_bookmarks" id={`div_bookmarks_${topic.id}`}> </div>
+      {canDelete ? (
+        <form
+          method="post"
+          action={`/topics/${topic.id}/delete/`}
+          style="margin-top:10px"
+          onsubmit="return confirm('Удалить топик?')"
+        >
+          <button type="submit" class="a_dashed" style="border:0;background:none;cursor:pointer">
+            Удалить топик
+          </button>
+        </form>
+      ) : null}
     </div>
   );
 };

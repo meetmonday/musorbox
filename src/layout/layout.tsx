@@ -13,6 +13,7 @@ export type LayoutProps = {
   sidebar?: unknown;
   currentSection?: string;
   featured?: unknown;
+  head?: unknown;
 };
 
 const sectionLinks: Record<string, string> = {
@@ -38,6 +39,7 @@ export const Layout: FC<LayoutProps> = ({
   sidebar,
   currentSection,
   featured,
+  head,
 }) => {
   const curSection = currentSection ? sectionLinks[currentSection] : undefined;
   return (
@@ -52,6 +54,7 @@ export const Layout: FC<LayoutProps> = ({
         <link rel="stylesheet" href="/css/main.css?20130805" />
         <link rel="stylesheet" href="/css/ads.css?20130805" />
         <script src="/js/app.js" defer />
+        {head}
       </head>
       <body>
         <Header user={user} />
