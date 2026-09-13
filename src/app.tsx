@@ -12,6 +12,7 @@ import votesRoutes from "./votes/routes";
 import usersRoutes from "./users/routes";
 import editorRoutes from "./editor/routes";
 import pagesRoutes from "./pages/routes";
+import activityPubRoutes from "./activitypub/routes";
 
 type AppEnv = {
   Variables: UserContext;
@@ -29,6 +30,7 @@ app.use("/avatars/*", serveStatic({ root: "./public" }));
 app.use("/Bredacture/*", serveStatic({ root: "./public" }));
 app.use("/uploads/*", serveStatic({ root: "./public" }));
 
+app.route("/", activityPubRoutes);
 app.route("/", topicsRoutes);
 app.route("/", authRoutes);
 app.route("/", forumRoutes);

@@ -10,4 +10,5 @@ export const config = {
   copyrightStart: 2025,
   copyrightOwner: "MusorBox",
   contactEmail: "hello@musorbox.example",
+  baseUrl: (process.env.PUBLIC_BASE_URL ?? `http://localhost:${Number(process.env.PORT ?? 3000)}`).replace(/\/+$/, ""),
 };

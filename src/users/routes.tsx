@@ -54,6 +54,9 @@ async function handleProfile(c: AppContext) {
     title: `Профиль — ${config.siteName}`,
     user: current,
     sidebar,
+    head: (
+      <link rel="alternate" type="application/activity+json" href={`/users/${username}`} />
+    ),
     children: <ProfilePage profile={profile} rating={rating} isOwner={isOwner} />,
   });
   return c.html(`<!DOCTYPE html>${html}`);

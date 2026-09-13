@@ -15,6 +15,20 @@
       "when": 1789156129436,
       "tag": "0001_lowly_red_wolf",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789323145461,
+      "tag": "0002_numerous_omega_sentinel",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1789325231632,
+      "tag": "0003_fair_triton",
+      "breakpoints": true
     }
   ]
 }

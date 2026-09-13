@@ -1,6 +1,7 @@
 import { getDrizzle } from "../core/db";
 import { topics, categories, users, tags, topicTags, comments } from "../core/schema";
 import { and, desc, eq, sql, count } from "drizzle-orm";
+import { notifyTopicCreated, notifyTopicDeleted } from "../activitypub/notify";
 
 export type TopicListItem = {
   id: number;
@@ -25,6 +26,7 @@ export type TopicDetail = TopicListItem & {
   categoryType: string;
   isPinned: boolean;
   views: number;
+  updatedAt?: Date | null;
 };
 
 type TopicRow = {
@@ -413,10 +415,13 @@ export async function createTopic(input: {
   if (input.tagIds.length) {
     await db.insert(topicTags).values(input.tagIds.map((tagId) => ({ topicId: id, tagId })));
   }
+  void notifyTopicCreated(id, input.authorId);
   return id;
 }
 
 export async function deleteTopic(id: number): Promise<void> {
   const db = getDrizzle();
+  const author = await db.select({ authorId: topics.authorId }).from(topics).where(eq(topics.id, id)).limit(1);
   await db.delete(topics).where(eq(topics.id, id));
+  if (author[0]) void notifyTopicDeleted(id, author[0].authorId);
 }

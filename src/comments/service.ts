@@ -1,6 +1,7 @@
 import { getDrizzle } from "../core/db";
 import { comments, topics, users } from "../core/schema";
 import { asc, eq, sql } from "drizzle-orm";
+import { notifyCommentCreated, notifyCommentDeleted } from "../activitypub/notify";
 
 export type TopicComment = {
   id: number;
@@ -73,6 +74,7 @@ export async function addComment(opts: {
   parentId: number | null;
   authorId: number;
   body: string;
+  apUrl?: string | null;
 }): Promise<number> {
   const db = getDrizzle();
   const ids = await db
@@ -82,6 +84,7 @@ export async function addComment(opts: {
       parentId: opts.parentId,
       authorId: opts.authorId,
       body: opts.body,
+      apUrl: opts.apUrl ?? null,
     })
     .returning({ id: comments.id });
   await db
@@ -91,7 +94,9 @@ export async function addComment(opts: {
       updatedAt: new Date(),
     })
     .where(eq(topics.id, opts.topicId));
-  return ids[0]?.id ?? 0;
+  const id = ids[0]?.id ?? 0;
+  if (id && !opts.apUrl) void notifyCommentCreated(id, opts.authorId);
+  return id;
 }
 
 export async function getCommentChildrenCount(commentId: number): Promise<number> {
@@ -105,9 +110,15 @@ export async function getCommentChildrenCount(commentId: number): Promise<number
 
 export async function deleteComment(commentId: number, topicId: number): Promise<void> {
   const db = getDrizzle();
+  const author = await db
+    .select({ authorId: comments.authorId, apUrl: comments.apUrl })
+    .from(comments)
+    .where(eq(comments.id, commentId))
+    .limit(1);
   await db.delete(comments).where(eq(comments.id, commentId));
   await db
     .update(topics)
     .set({ commentCount: sql`max(${topics.commentCount} - 1, 0)`, updatedAt: new Date() })
     .where(eq(topics.id, topicId));
+  if (author[0] && !author[0].apUrl) void notifyCommentDeleted(commentId, author[0].authorId);
 }

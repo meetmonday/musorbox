@@ -204,6 +204,9 @@ app.get("/topics/:id/:slug", async (c) => {
     user: c.get("user") ?? null,
     currentSection: topic.categorySlug,
     sidebar,
+    head: (
+      <link rel="alternate" type="application/activity+json" href={`/topics/${id}/${slug}`} />
+    ),
     children: (
       <div>
         <TopicDetailView topic={topic} canDelete={canDeleteTopic} />

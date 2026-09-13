@@ -124,6 +124,7 @@ export const comments = sqliteTable(
       .notNull()
       .references(() => users.id),
     body: text("body").notNull(),
+    apUrl: text("ap_url"),
     votesUp: integer("votes_up").notNull().default(0),
     votesDown: integer("votes_down").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
@@ -132,6 +133,7 @@ export const comments = sqliteTable(
     index("comments_topic_idx").on(t.topicId),
     index("comments_parent_idx").on(t.parentId),
     index("comments_author_idx").on(t.authorId),
+    index("comments_ap_url_idx").on(t.apUrl),
   ],
 );
 
@@ -159,4 +161,70 @@ export const firms = sqliteTable(
     name: text("name").notNull().unique(),
   },
   (t) => [uniqueIndex("firms_name_idx").on(t.name)],
+);
+
+/* ─── ActivityPub tables ─── */
+
+export const apKeys = sqliteTable(
+  "ap_keys",
+  {
+    userId: integer("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    privateKeyPem: text("private_key_pem").notNull(),
+    publicKeyPem: text("public_key_pem").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+);
+
+export const apActors = sqliteTable(
+  "ap_actors",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    remoteId: text("remote_id").notNull(),
+    preferredUsername: text("preferred_username").notNull(),
+    host: text("host").notNull(),
+    displayName: text("display_name"),
+    avatarUrl: text("avatar_url"),
+    inboxUrl: text("inbox_url"),
+    sharedInboxUrl: text("shared_inbox_url"),
+    publicKeyPem: text("public_key_pem").notNull(),
+    localUserId: integer("local_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    uniqueIndex("ap_actors_remote_id_idx").on(t.remoteId),
+    index("ap_actors_host_idx").on(t.host),
+    index("ap_actors_local_user_idx").on(t.localUserId),
+  ],
+);
+
+export const apFollowers = sqliteTable(
+  "ap_followers",
+  {
+    localUserId: integer("local_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    actorId: integer("actor_id")
+      .notNull()
+      .references(() => apActors.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.localUserId, t.actorId] }),
+    index("ap_followers_actor_idx").on(t.actorId),
+  ],
+);
+
+export const apActivities = sqliteTable(
+  "ap_activities",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    actorId: integer("actor_id").references(() => apActors.id, { onDelete: "cascade" }),
+    object: text("object"),
+    targetId: text("target_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
 );
