@@ -11,4 +11,12 @@ export const config = {
   copyrightOwner: "MusorBox",
   contactEmail: "hello@musorbox.example",
   baseUrl: (process.env.PUBLIC_BASE_URL ?? `http://localhost:${Number(process.env.PORT ?? 3000)}`).replace(/\/+$/, ""),
+  /**
+   * Dev-only: comma-separated hostnames that may be fetched over plain http
+   * (e.g. "pleroma.local" or Docker bridge IPs). Production stays https-only.
+   */
+  allowInsecureFetchHosts: (process.env.AP_ALLOW_INSECURE_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
 };

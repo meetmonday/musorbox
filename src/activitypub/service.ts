@@ -310,7 +310,15 @@ export async function fetchRemoteActor(iri: string): Promise<RemoteActorRow | nu
     return null;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  if (url.protocol === "http:" && !(url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1")) {
+  if (
+    url.protocol === "http:" &&
+    !(
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "::1" ||
+      config.allowInsecureFetchHosts.includes(url.hostname.toLowerCase())
+    )
+  ) {
     return null;
   }
   const controller = new AbortController();

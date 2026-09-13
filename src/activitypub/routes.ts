@@ -34,8 +34,8 @@ function wantsJsonLd(c: { req: { header: (n: string) => string | undefined } }):
 }
 
 function jsonResponse(c: any, body: unknown, type: "activity" | "ld" = "activity") {
-  c.header("Content-Type", type === "activity" ? ACTIVITY_JSON : LD_JSON);
-  return c.json(body);
+  const contentType = type === "activity" ? ACTIVITY_JSON : LD_JSON;
+  return c.body(JSON.stringify(body), 200, { "Content-Type": contentType });
 }
 
 /* ── WebFinger ── */
