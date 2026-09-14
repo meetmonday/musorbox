@@ -151,14 +151,36 @@ export type VerifyInput = {
   sigHeader: string | null;
   authHeader: string | null;
   getHeader: (name: string) => string | undefined;
+  sigInputHeader?: string | null;
 };
 
+async function digestMatchesBody(digestHeader: string, body: string): Promise<boolean> {
+  const expected = await sha256Base64(body);
+  for (const part of digestHeader.split(",")) {
+    const p = part.trim();
+    if (/^sha-256=/i.test(p)) {
+      return p.slice("sha-256=".length) === expected;
+    }
+  }
+  return false;
+}
+
 export async function verifyHttpSignature(input: VerifyInput): Promise<boolean> {
+  if (await verifyLegacySignature(input)) return true;
+  return verifyRfc9421Signature(input);
+}
+
+async function verifyLegacySignature(input: VerifyInput): Promise<boolean> {
   const raw = extractSignature(input.sigHeader, input.authHeader);
   if (!raw) return false;
   const sp = parseSignature(raw);
   if (!sp) return false;
 
+  // The signature must bind both the request target and a timestamp; otherwise
+  // a captured signature can be replayed against a different path/date and the
+  // body is not freshness- or integrity-bound.
+  if (!sp.headers.includes("(request-target)")) return false;
+  if (!sp.headers.includes("date")) return false;
   for (const h of sp.headers) {
     if (h === "date" && input.getHeader("date")) {
       if (!dateWithinSkew(input.getHeader("date")!)) return false;
@@ -166,14 +188,140 @@ export async function verifyHttpSignature(input: VerifyInput): Promise<boolean> 
   }
 
   const digestHeader = input.getHeader("digest");
-  if (digestHeader && sp.headers.includes("digest")) {
-    const expected = `SHA-256=${await sha256Base64(input.body)}`;
-    const normalized = digestHeader.split(",").find((d) => d.trim().startsWith("SHA-256="))?.trim();
-    if (!normalized || normalized !== expected) return false;
+  if (digestHeader) {
+    if (!sp.headers.includes("digest")) return false;
+    if (!(await digestMatchesBody(digestHeader, input.body))) return false;
   }
 
   const signingString = buildSigningString(input.method, input.path, sp.headers, input.getHeader);
   return verifySpki(signingString, sp.signature, input.actorPublicKeyPem);
+}
+
+/* ── RFC 9421 (HTTP Message Signatures) ── */
+
+type Rfc9421Sig = {
+  name: string;
+  components: string[];
+  keyId: string | null;
+  alg: string | null;
+  created: number | null;
+  expires: number | null;
+};
+
+/**
+ * Parse an RFC 9421 `Signature-Input` header, e.g.
+ *   sig1=("@method" "@path" "@authority" "content-type" "digest");created=1700000000;keyid="...#main-key";alg="rsa-v1_5-sha256"
+ */
+export function parseSignatureInput(value: string | null | undefined): Rfc9421Sig | null {
+  if (!value) return null;
+  const m = /^([A-Za-z0-9_-]+)\s*=\s*\(([\s\S]*?)\)(.*)$/.exec(value.trim());
+  if (!m) return null;
+  const components = (m[2] ?? "")
+    .split(/\s+/)
+    .map((c) => c.replace(/^"|"$/g, ""))
+    .filter(Boolean);
+  const params: Record<string, string | number> = {};
+  const re = /([A-Za-z0-9_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s;]+))/g;
+  let pm: RegExpExecArray | null;
+  while ((pm = re.exec(m[3] ?? "")) !== null) {
+    const k = (pm[1] ?? "").toLowerCase();
+    const v = pm[2] ?? pm[3] ?? pm[4];
+    if (k && v !== undefined && v !== null) params[k] = v;
+  }
+  const created = typeof params.created === "number" ? params.created : params.created === undefined ? null : Number(params.created);
+  const expires = typeof params.expires === "number" ? params.expires : params.expires === undefined ? null : Number(params.expires);
+  return {
+    name: m[1]!,
+    components,
+    keyId: typeof params.keyid === "string" ? params.keyid : null,
+    alg: typeof params.alg === "string" ? params.alg : null,
+    created: Number.isFinite(created) ? created : null,
+    expires: Number.isFinite(expires) ? expires : null,
+  };
+}
+
+/** Pull `name=:base64:` out of an RFC 9421 `Signature` header. */
+export function parseSignatureField(value: string | null | undefined, name: string): string | null {
+  if (!value) return null;
+  const m = new RegExp(`${name}\\s*=\\s*:([^:]*):`).exec(value);
+  return m?.[1] ?? null;
+}
+
+function buildRfc9421String(
+  method: string,
+  url: URL,
+  components: string[],
+  created: number | null,
+  expires: number | null,
+  getHeader: (name: string) => string | undefined,
+): string {
+  const lines: string[] = [];
+  for (const rawname of components) {
+    const name = rawname.toLowerCase();
+    let value: string | null = null;
+    switch (name) {
+      case "@method":
+        value = method.toUpperCase();
+        break;
+      case "@path":
+        value = url.pathname;
+        break;
+      case "@query":
+        value = url.search.replace(/^\?/, "");
+        break;
+      case "@authority":
+        value = url.host;
+        break;
+      case "@scheme":
+        value = url.protocol.replace(/:$/, "");
+        break;
+      case "@target-uri":
+        value = url.toString();
+        break;
+      case "@created":
+        value = created === null ? null : String(created);
+        break;
+      case "@expires":
+        value = expires === null ? null : String(expires);
+        break;
+      default: {
+        const h = name.startsWith("@") ? name.slice(1) : name;
+        value = getHeader(h) ?? getHeader(name) ?? "";
+        break;
+      }
+    }
+    if (value === null) continue;
+    lines.push(`${name}: ${value}`);
+  }
+  return lines.join("\n");
+}
+
+async function verifyRfc9421Signature(input: VerifyInput): Promise<boolean> {
+  const sigInputHeader = input.sigInputHeader ?? input.getHeader("signature-input");
+  const si = parseSignatureInput(sigInputHeader);
+  if (!si) return false;
+  const signature = parseSignatureField(input.sigHeader, si.name);
+  if (!signature) return false;
+
+  if (si.created !== null && Math.abs(Date.now() / 1000 - si.created) > clockSkewMs / 1000) return false;
+  const digestHeader = input.getHeader("digest");
+  if (digestHeader && si.components.includes("digest")) {
+    if (!(await digestMatchesBody(digestHeader, input.body))) return false;
+  }
+  if (si.components.includes("date") && input.getHeader("date") && !dateWithinSkew(input.getHeader("date")!)) {
+    return false;
+  }
+
+  let url: URL;
+  try {
+    const scheme = (input.getHeader("x-forwarded-proto") ?? "https").split(",")[0]?.trim() || "https";
+    const hostHeader = input.getHeader("host") ?? "localhost";
+    url = new URL(`${scheme}://${hostHeader}${input.path}`);
+  } catch {
+    return false;
+  }
+  const signingString = buildRfc9421String(input.method, url, si.components, si.created, si.expires, input.getHeader);
+  return verifySpki(signingString, signature, input.actorPublicKeyPem);
 }
 
 export type SigningInput = {

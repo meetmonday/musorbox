@@ -168,15 +168,29 @@ async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
   if (!noteType || !["Note", "Article", "Page", "Question"].includes(noteType)) return;
 
   const replyTo = firstString(obj.inReplyTo);
-  const replyRef = replyTo ? resolveLocalObject(replyTo) : null;
 
   let topicId: number | null = null;
   let parentId: number | null = null;
-  if (replyRef?.kind === "comment") {
-    topicId = replyRef.topicId;
-    parentId = replyRef.commentId;
-  } else if (replyRef?.kind === "topic") {
-    topicId = replyRef.topicId;
+  if (replyTo) {
+    const replyRef = resolveLocalObject(replyTo);
+    if (replyRef?.kind === "comment") {
+      topicId = replyRef.topicId;
+      parentId = replyRef.commentId;
+    } else if (replyRef?.kind === "topic") {
+      topicId = replyRef.topicId;
+    } else if (!replyRef) {
+      // Remote reply to a remote note we previously imported as a ghost comment.
+      const db = getDrizzle();
+      const row = await db
+        .select({ id: comments.id, topicId: comments.topicId })
+        .from(comments)
+        .where(eq(comments.apUrl, replyTo))
+        .limit(1);
+      if (row[0]) {
+        topicId = row[0].topicId;
+        parentId = row[0].id;
+      }
+    }
   }
   if (!topicId) {
     topicId = await findTopicIdInAddressing(obj);

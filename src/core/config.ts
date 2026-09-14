@@ -12,11 +12,18 @@ export const config = {
   contactEmail: "hello@musorbox.example",
   baseUrl: (process.env.PUBLIC_BASE_URL ?? `http://localhost:${Number(process.env.PORT ?? 3000)}`).replace(/\/+$/, ""),
   /**
-   * Dev-only: comma-separated hostnames that may be fetched over plain http
-   * (e.g. "pleroma.local" or Docker bridge IPs). Production stays https-only.
+   * Hostnames (lowercased) that may be fetched over plain http for remote actors.
+   * Defaults to the loopback hosts so local dev federation works out of the box.
+   * Set `AP_ALLOW_INSECURE_HOSTS` to override; an explicitly-set empty string
+   * disables plain-http fetches entirely (https-only), which is the recommended
+   * production setting.
    */
-  allowInsecureFetchHosts: (process.env.AP_ALLOW_INSECURE_HOSTS ?? "")
-    .split(",")
-    .map((h) => h.trim().toLowerCase())
-    .filter(Boolean),
+  allowInsecureFetchHosts: (() => {
+    const raw = process.env.AP_ALLOW_INSECURE_HOSTS;
+    if (raw === undefined) return ["localhost", "127.0.0.1", "::1"];
+    return raw
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean);
+  })(),
 };

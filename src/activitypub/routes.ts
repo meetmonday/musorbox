@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { appendFileSync } from "node:fs";
 import { getDrizzle } from "../core/db";
 import { users, topics, comments } from "../core/schema";
 import { eq, count, asc } from "drizzle-orm";
@@ -149,10 +150,17 @@ app.get("/users/:username", async (c, next) => {
 /* ── Inbox ── */
 
 const MAX_INBOX_SIZE = 1_000_000;
+const MAX_TRACKED_IPS = 10_000;
 const inboxHits = new Map<string, { time: number; count: number }>();
 
 function rateLimited(ip: string): boolean {
   const now = Date.now();
+  if (inboxHits.size >= MAX_TRACKED_IPS) {
+    for (const [k, v] of inboxHits) {
+      if (now - v.time > 60_000) inboxHits.delete(k);
+    }
+    if (inboxHits.size >= MAX_TRACKED_IPS) inboxHits.clear();
+  }
   const entry = inboxHits.get(ip);
   if (!entry || now - entry.time > 60_000) {
     inboxHits.set(ip, { time: now, count: 1 });
@@ -163,7 +171,24 @@ function rateLimited(ip: string): boolean {
 }
 
 function clientIp(c: any): string {
-  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || "unknown";
+  return (
+    c.req.header("x-real-ip") ||
+    c.req.header("cf-connecting-ip") ||
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
+
+function apDebug(...parts: unknown[]) {
+  if (!process.env.AP_DEBUG) return;
+  try {
+    appendFileSync(
+      "/tmp/ap-inbox-debug.log",
+      `${new Date().toISOString()} ${parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ")}\n`,
+    );
+  } catch {
+    /* noop */
+  }
 }
 
 app.post("/users/:username/inbox", async (c) => {
@@ -186,6 +211,7 @@ app.post("/users/:username/inbox", async (c) => {
 
   const sigHeader = c.req.header("signature") ?? null;
   const authHeader = c.req.header("authorization") ?? null;
+  apDebug("inbox", { type: doc.type, actorInDoc: doc.actor, sigHeader, authHeader });
   let sp = parseSignature(sigHeader);
   if (!sp && authHeader) {
     const stripped = authHeader.trim().replace(/^Signature\s+/i, "");
@@ -200,19 +226,26 @@ app.post("/users/:username/inbox", async (c) => {
       ownerUrl = null;
     }
   }
+  apDebug("parsed", { keyId, ownerUrl, sp });
 
   let actor: RemoteActorRow | null = null;
   if (ownerUrl) {
     actor = (await getRemoteActorByRemoteId(ownerUrl)) ?? (await fetchRemoteActor(ownerUrl));
   }
-  if (!actor) return c.json({ error: "unknown/signed actor" }, 401);
+  apDebug("actor lookup", { actorId: actor?.remoteId ?? null, fromCache: actor ? "yes" : "no" });
+  if (!actor) {
+    apDebug("401 unknown/signed actor");
+    return c.json({ error: "unknown/signed actor" }, 401);
+  }
 
   // The request must be signed by the key belonging to the actor that authored the payload.
   if (ownerUrl && !(ownerUrl === actor.remoteId || ownerUrl.startsWith(actor.remoteId + "#"))) {
+    apDebug("401 key owner mismatch", { ownerUrl, remoteId: actor.remoteId });
     return c.json({ error: "key owner mismatch" }, 401);
   }
   const docActor = firstString(doc.actor);
   if (docActor && docActor.split("#")[0] !== actor.remoteId) {
+    apDebug("401 actor mismatch", { docActor, remoteId: actor.remoteId });
     return c.json({ error: "actor mismatch" }, 401);
   }
 
@@ -224,13 +257,16 @@ app.post("/users/:username/inbox", async (c) => {
     actorPublicKeyPem: actor.publicKeyPem,
     sigHeader,
     authHeader,
+    sigInputHeader: c.req.header("signature-input"),
     getHeader,
   });
-  if (!ok) return c.json({ error: "invalid signature" }, 401);
+  if (!ok) {
+    apDebug("401 signature", { type: doc.type, keyId, ownerUrl, actorId: actor.remoteId, sp, headers: c.req.raw.headers });
+    return c.json({ error: "invalid signature" }, 401);
+  }
 
   await processIncomingActivity(doc, actor, username);
-  c.header("Content-Type", ACTIVITY_JSON);
-  return c.json({}, 202);
+  return c.body("", 202, { "Content-Type": ACTIVITY_JSON });
 });
 
 function firstString(v: unknown): string | null {
@@ -341,8 +377,7 @@ app.get("/topics/:id/:slug/replies", async (c) => {
     const n = await commentNoteById(r.id);
     if (n) notes.push(n);
   }
-  c.header("Content-Type", ACTIVITY_JSON);
-  return c.json(buildCollection(notes, notes.length));
+  return c.body(JSON.stringify(buildCollection(notes, notes.length)), 200, { "Content-Type": ACTIVITY_JSON });
 });
 
 export default app;

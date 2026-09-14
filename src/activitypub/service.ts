@@ -299,47 +299,95 @@ function extractPublicKeyPem(doc: Rec): string {
   return "";
 }
 
-/** Fetch a remote actor by its IRI, caching into the DB. */
-export async function fetchRemoteActor(iri: string): Promise<RemoteActorRow | null> {
-  const cached = await getRemoteActorByRemoteId(iri);
-  if (cached) return cached;
+const MAX_FETCH_REDIRECTS = 5;
+const REMOTE_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Outbound fetch policy for remote actors. Only https is allowed (plus plain
+ * http to hosts explicitly listed in `config.allowInsecureFetchHosts`, which
+ * defaults to loopback for local dev). A redirect that downgrades to http, or
+ * that targets a host outside the policy, is rejected before any connection is
+ * made. This keeps an unauthenticated inbox request from being turned into an
+ * SSRF probe against internal hosts.
+ */
+function allowedRemoteFetchUrl(u: URL, wasHttps: boolean): boolean {
+  if (u.protocol === "https:") return true;
+  if (u.protocol !== "http:") return false;
+  if (wasHttps) return false;
+  return config.allowInsecureFetchHosts.includes(u.hostname.toLowerCase());
+}
+
+async function fetchRemoteDoc(iri: string): Promise<Rec | null> {
   let url: URL;
   try {
     url = new URL(iri);
   } catch {
     return null;
   }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  if (
-    url.protocol === "http:" &&
-    !(
-      url.hostname === "localhost" ||
-      url.hostname === "127.0.0.1" ||
-      url.hostname === "::1" ||
-      config.allowInsecureFetchHosts.includes(url.hostname.toLowerCase())
-    )
-  ) {
-    return null;
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const res = await fetch(iri, {
-      headers: { Accept: "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"" },
-      redirect: "follow",
-      signal: controller.signal,
-    });
+  if (!allowedRemoteFetchUrl(url, false)) return null;
+
+  for (let hop = 0; hop < MAX_FETCH_REDIRECTS; hop++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REMOTE_FETCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: {
+          Accept: 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams"',
+        },
+        redirect: "manual",
+        signal: controller.signal,
+      });
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get("location");
+      if (!location) return null;
+      let next: URL;
+      try {
+        next = new URL(location, url);
+      } catch {
+        return null;
+      }
+      if (!allowedRemoteFetchUrl(next, url.protocol === "https:")) return null;
+      url = next;
+      continue;
+    }
+
     if (!res.ok) return null;
     const ct = res.headers.get("content-type") ?? "";
     if (!/json|activity\+json|ld\+json/i.test(ct)) return null;
-    const doc = (await res.json()) as Rec;
-    if (typeof doc.id !== "string") return null;
-    return upsertRemoteActor(doc);
+    try {
+      const doc = (await res.json()) as Rec;
+      return typeof doc.id === "string" ? doc : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** Fetch a remote actor by its IRI, caching into the DB. */
+export async function fetchRemoteActor(iri: string): Promise<RemoteActorRow | null> {
+  const cached = await getRemoteActorByRemoteId(iri);
+  if (cached) return cached;
+
+  const doc = await fetchRemoteDoc(iri);
+  if (!doc) return null;
+
+  // Only store an actor whose id we actually asked for: prevents a remote host
+  // from aliasing stored keys under a foreign origin (which the signature check
+  // in the inbox route would then implicitly trust on later requests).
+  try {
+    if (new URL(String(doc.id)).origin !== new URL(iri).origin) return null;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
+  return upsertRemoteActor(doc);
 }
 
 /* ── outbox data ── */
@@ -409,6 +457,7 @@ export async function listOutboxActivities(
   const items: Array<{
     ts: number;
     publishedAt: string;
+    kind: "topic" | "comment";
     activity: Record<string, unknown>;
   }> = [];
 
@@ -418,6 +467,7 @@ export async function listOutboxActivities(
     items.push({
       ts: r.createdAt.getTime(),
       publishedAt: r.createdAt.toISOString(),
+      kind: "topic",
       activity: createActivityHome(note),
     });
   }
@@ -439,6 +489,7 @@ export async function listOutboxActivities(
     items.push({
       ts: r.createdAt.getTime(),
       publishedAt: r.createdAt.toISOString(),
+      kind: "comment",
       activity: createActivityHome(note),
     });
   }
@@ -446,7 +497,7 @@ export async function listOutboxActivities(
   items.sort((a, b) => b.ts - a.ts);
   const page = items.slice(ok.offset, ok.offset + ok.limit);
   return page.map((i) => ({
-    kind: (i.activity.object as Rec).type === "Note" ? "topic" : "comment",
+    kind: i.kind,
     activity: i.activity,
     publishedAt: i.publishedAt,
   }));
@@ -641,24 +692,32 @@ export async function getGhostUserForRemoteActor(actorId: number): Promise<numbe
 
   const remoteId = actor.remoteId;
   const hex = Buffer.from(await subtle.digest("SHA-256", new TextEncoder().encode(remoteId))).toString("hex");
-  let username = `fed_${hex.slice(0, 12)}`;
-  const existing = await db.query.users.findFirst({ where: eq(users.username, username) });
-  if (existing) {
-    username = `fed_${hex.slice(0, 12)}_${Date.now() % 100000}`;
-  }
+  const base = `fed_${hex.slice(0, 12)}`;
+  const fullName = actor.displayName ?? actor.preferredUsername;
+  const avatarUrl = actor.avatarUrl;
   const passwordHash = await hash(randomBytes(32).toString("hex"), 10);
-  const rows = await db
-    .insert(users)
-    .values({
-      username,
-      passwordHash,
-      fullName: actor.displayName ?? actor.preferredUsername,
-      role: "user",
-      avatarUrl: actor.avatarUrl,
-      wasEverCommenter: true,
-    })
-    .returning({ id: users.id });
-  const ghostId = rows[0]?.id;
+  const insert = (username: string) =>
+    db
+      .insert(users)
+      .values({ username, passwordHash, fullName, role: "user", avatarUrl, wasEverCommenter: true })
+      .onConflictDoNothing()
+      .returning({ id: users.id });
+
+  let rows = await insert(base);
+  if (!rows[0]) {
+    // Either a concurrent import of the same remote actor already created the
+    // ghost (link it), or the 48-bit base name genuinely collides with an
+    // existing user (retry with a fresh random suffix).
+    const raced = await db.query.users.findFirst({ where: eq(users.username, base) });
+    if (raced) {
+      rows = [{ id: raced.id }];
+    } else {
+      for (let tries = 0; tries < 5 && !rows[0]; tries++) {
+        rows = await insert(`${base}_${randomBytes(3).toString("hex")}`);
+      }
+    }
+  }
+  const ghostId = rows[0]?.id ?? null;
   if (ghostId) {
     await db.update(apActors).set({ localUserId: ghostId }).where(eq(apActors.id, actor.id));
   }
