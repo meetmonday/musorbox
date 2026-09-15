@@ -9,6 +9,47 @@ export const AS_CONTEXT = [
 
 type Rec = Record<string, unknown>;
 
+/** Rewrite relative src/href URLs in federated HTML content to absolute ones. */
+function absolutizeUrls(html: string): string {
+  return String(html).replace(
+    /((?:src|href)\s*=\s*["'])(\/[^"'#][^"']*)(["'])/gi,
+    (_m, pre: string, path: string, post: string) => `${pre}${config.baseUrl}${path}${post}`,
+  );
+}
+
+/** Remove inline <img> tags (images are delivered via `attachment` instead) and empty wrappers left behind. */
+function stripInlineImages(html: string): string {
+  return String(html)
+    .replace(/<img\b[^>]*>/gi, "")
+    .replace(/<div[^>]*>\s*<\/div>/gi, "");
+}
+
+function guessImageMediaType(url: string): string {
+  const ext = (/\.([a-z0-9]+)(?:[?#]|$)/i.exec(url)?.[1] ?? "").toLowerCase();
+  switch (ext) {
+    case "png": return "image/png";
+    case "jpeg":
+    case "jpg": return "image/jpeg";
+    case "gif": return "image/gif";
+    case "webp": return "image/webp";
+    case "avif": return "image/avif";
+    default: return "image/jpeg";
+  }
+}
+
+/** Extract up to 4 absolute http(s) image URLs from federated HTML content. */
+function mediaAttachments(html: string): Rec[] {
+  const urls: string[] = [];
+  for (const m of html.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
+    const u = (m[1] ?? "").trim();
+    if (/^https?:\/\//i.test(u) && !/\s/.test(u) && u.length <= 2048 && !urls.includes(u)) {
+      urls.push(u);
+      if (urls.length >= 4) break;
+    }
+  }
+  return urls.map((url) => ({ type: "Image", mediaType: guessImageMediaType(url), url }));
+}
+
 export type ActorUser = {
   username: string;
   fullName: string | null;
@@ -61,17 +102,25 @@ export function buildActor(
 
 export function buildTopicNote(topic: TopicDetail): Rec {
   const url = `${config.baseUrl}/topics/${topic.id}/${topic.slug}`;
+  const contentWithImages = absolutizeUrls(topic.body);
+  const attachment = mediaAttachments(contentWithImages);
+  const content = stripInlineImages(contentWithImages);
+  const leadImage =
+    topic.leadImage && /^https?:\/\//i.test(topic.leadImage) ? topic.leadImage : null;
+  if (leadImage && !attachment.some((a) => a.url === leadImage)) {
+    attachment.unshift({ type: "Image", mediaType: guessImageMediaType(leadImage), url: leadImage });
+  }
   return {
     "@context": [...AS_CONTEXT],
     type: "Note",
     id: url,
     url,
     attributedTo: `${config.baseUrl}/users/${topic.authorUsername}`,
-    content: topic.body,
+    content,
     published: topic.createdAt.toISOString(),
     updated: topic.updatedAt?.toISOString(),
     tag: topic.tags.map((t) => ({ type: "Hashtag", href: `${config.baseUrl}/tag/${t.slug}`, name: `#${t.name}` })),
-    attachment: [],
+    attachment,
     to: ["https://www.w3.org/ns/activitystreams#Public"],
     cc: [`${config.baseUrl}/users/${topic.authorUsername}/followers`],
     replies: {
@@ -90,19 +139,22 @@ export function commentUrl(topicId: number, topicSlug: string, commentId: number
 export function buildCommentNote(comment: TopicComment, topic: TopicDetail): Rec {
   const baseUrl = `${config.baseUrl}/topics/${topic.id}/${topic.slug}`;
   const noteId = commentUrl(topic.id, topic.slug, comment.id);
+  const contentWithImages = absolutizeUrls(comment.body);
+  const content = stripInlineImages(contentWithImages);
   return {
     "@context": [...AS_CONTEXT],
     type: "Note",
     id: noteId,
     url: noteId,
     attributedTo: `${config.baseUrl}/users/${comment.authorUsername}`,
-    content: comment.body,
+    content,
     published: comment.createdAt.toISOString(),
     inReplyTo: comment.parentId
       ? commentUrl(topic.id, topic.slug, comment.parentId)
       : baseUrl,
     to: ["https://www.w3.org/ns/activitystreams#Public"],
     cc: [`${config.baseUrl}/users/${topic.authorUsername}/followers`],
+    attachment: mediaAttachments(contentWithImages),
     replies: {
       type: "Collection",
       totalItems: 0,

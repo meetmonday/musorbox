@@ -185,36 +185,43 @@ async function digestMatchesBody(digestHeader: string, body: string): Promise<bo
   return false;
 }
 
-export async function verifyHttpSignature(input: VerifyInput): Promise<boolean> {
-  if (await verifyLegacySignature(input)) return true;
-  return verifyRfc9421Signature(input);
+export async function verifyHttpSignature(input: VerifyInput): Promise<{ ok: boolean; reason: string }> {
+  const legacy = await verifyLegacySignature(input);
+  if (legacy.ok) return legacy;
+  const rfc9421 = await verifyRfc9421Signature(input);
+  if (rfc9421.ok) return rfc9421;
+  const bothMissing = legacy.reason === "no-signature" && rfc9421.reason === "rfc9421-no-signature-input";
+  return { ok: false, reason: bothMissing ? "no-signature" : `${legacy.reason} | ${rfc9421.reason}` };
 }
 
-async function verifyLegacySignature(input: VerifyInput): Promise<boolean> {
+async function verifyLegacySignature(input: VerifyInput): Promise<{ ok: boolean; reason: string }> {
   const raw = extractSignature(input.sigHeader, input.authHeader);
-  if (!raw) return false;
+  if (!raw) return { ok: false, reason: "no-signature" };
   const sp = parseSignature(raw);
-  if (!sp) return false;
+  if (!sp) return { ok: false, reason: "legacy-parse-failed" };
 
   // The signature must bind both the request target and a timestamp; otherwise
   // a captured signature can be replayed against a different path/date and the
   // body is not freshness- or integrity-bound.
-  if (!sp.headers.includes("(request-target)")) return false;
-  if (!sp.headers.includes("date")) return false;
+  if (!sp.headers.includes("(request-target)")) return { ok: false, reason: "legacy-missing-request-target" };
+  if (!sp.headers.includes("date")) return { ok: false, reason: "legacy-missing-date" };
   for (const h of sp.headers) {
     if (h === "date" && input.getHeader("date")) {
-      if (!dateWithinSkew(input.getHeader("date")!)) return false;
+      if (!dateWithinSkew(input.getHeader("date")!)) return { ok: false, reason: "legacy-date-skew" };
     }
   }
 
   const digestHeader = input.getHeader("digest");
   if (digestHeader) {
-    if (!sp.headers.includes("digest")) return false;
-    if (!(await digestMatchesBody(digestHeader, input.body))) return false;
+    if (!sp.headers.includes("digest")) return { ok: false, reason: "legacy-missing-digest-header" };
+    if (!(await digestMatchesBody(digestHeader, input.body))) return { ok: false, reason: "legacy-digest-mismatch" };
   }
 
   const signingString = buildSigningString(input.method, input.path, sp.headers, input.getHeader);
-  return verifySignature(signingString, sp.signature, input.actorPublicKeyPem);
+  if (!(await verifySignature(signingString, sp.signature, input.actorPublicKeyPem))) {
+    return { ok: false, reason: "legacy-crypto" };
+  }
+  return { ok: true, reason: "legacy-ok" };
 }
 
 /* ── RFC 9421 (HTTP Message Signatures) ── */
@@ -316,20 +323,22 @@ function buildRfc9421String(
   return lines.join("\n");
 }
 
-async function verifyRfc9421Signature(input: VerifyInput): Promise<boolean> {
+async function verifyRfc9421Signature(input: VerifyInput): Promise<{ ok: boolean; reason: string }> {
   const sigInputHeader = input.sigInputHeader ?? input.getHeader("signature-input");
   const si = parseSignatureInput(sigInputHeader);
-  if (!si) return false;
+  if (!si) return { ok: false, reason: "rfc9421-no-signature-input" };
   const signature = parseSignatureField(input.sigHeader, si.name);
-  if (!signature) return false;
+  if (!signature) return { ok: false, reason: "rfc9421-no-signature-field" };
 
-  if (si.created !== null && Math.abs(Date.now() / 1000 - si.created) > clockSkewMs / 1000) return false;
+  if (si.created !== null && Math.abs(Date.now() / 1000 - si.created) > clockSkewMs / 1000) {
+    return { ok: false, reason: "rfc9421-created-skew" };
+  }
   const digestHeader = input.getHeader("digest");
   if (digestHeader && si.components.includes("digest")) {
-    if (!(await digestMatchesBody(digestHeader, input.body))) return false;
+    if (!(await digestMatchesBody(digestHeader, input.body))) return { ok: false, reason: "rfc9421-digest-mismatch" };
   }
   if (si.components.includes("date") && input.getHeader("date") && !dateWithinSkew(input.getHeader("date")!)) {
-    return false;
+    return { ok: false, reason: "rfc9421-date-skew" };
   }
 
   let url: URL;
@@ -338,10 +347,13 @@ async function verifyRfc9421Signature(input: VerifyInput): Promise<boolean> {
     const hostHeader = input.getHeader("host") ?? "localhost";
     url = new URL(`${scheme}://${hostHeader}${input.path}`);
   } catch {
-    return false;
+    return { ok: false, reason: "rfc9421-bad-url" };
   }
   const signingString = buildRfc9421String(input.method, url, si.components, si.created, si.expires, input.getHeader);
-  return verifySignature(signingString, signature, input.actorPublicKeyPem);
+  if (!(await verifySignature(signingString, signature, input.actorPublicKeyPem))) {
+    return { ok: false, reason: "rfc9421-crypto" };
+  }
+  return { ok: true, reason: "rfc9421-ok" };
 }
 
 export type SigningInput = {
@@ -394,5 +406,39 @@ export async function signRequest(input: SigningInput): Promise<{ headers: Recor
       "Content-Type": "application/activity+json",
     },
     signature: sigHeader,
+  };
+}
+
+/**
+ * Sign an outbound resource fetch (GET). Some hosts (mastodon.social, and any
+ * with `authorized_fetch` / secure mode) reject unauthenticated profile and
+ * object fetches with `401 Request not signed`, so we sign the GET exactly like
+ * Mastodon signs its own outbound requests. The `keyId` must be a publicly
+ * resolvable actor key so the remote can fetch and verify it.
+ */
+export async function signUrlFetch(input: {
+  method: string;
+  url: string;
+  privateKeyPem: string;
+  keyId: string;
+}): Promise<{ headers: Record<string, string> }> {
+  const u = new URL(input.url);
+  const date = new Date().toUTCString();
+  const path = u.pathname + u.search;
+  const host = u.host;
+  const method = input.method.toLowerCase();
+  const names = ["(request-target)", "host", "date", "accept"];
+  const values: Record<string, string> = {
+    "(request-target)": `${method} ${path}`,
+    host,
+    date,
+    accept: "application/activity+json",
+  };
+  const signingString = names.map((n) => `${n}: ${values[n]}`).join("\n");
+  const signature = await signPkcs8(signingString, input.privateKeyPem);
+  const sigHeader = `keyId="${input.keyId}",algorithm="rsa-sha256",headers="${names.join(" ")}",signature="${signature}"`;
+  const accept = values.accept ?? "application/activity+json";
+  return {
+    headers: { Signature: sigHeader, Date: date, Accept: accept },
   };
 }

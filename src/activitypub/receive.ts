@@ -252,13 +252,13 @@ export async function processIncomingActivity(doc: Doc, actorRow: RemoteActorRow
     let obj = (doc.object && typeof doc.object === "object" ? doc.object : null) as Doc | null;
     // If Create has an object ID string, fetch the actual object.
     if (!obj && typeof doc.object === "string") {
-      const fetched = await fetchRemoteObject(doc.object);
+      const fetched = await fetchRemoteObject(doc.object, localUser.id);
       if (fetched) obj = fetched;
     }
     if (obj) {
       // If object is missing content, try fetching by its id.
       if (!pickContent(obj) && typeof obj.id === "string" && obj.id !== firstString(doc.object)) {
-        const fetched = await fetchRemoteObject(String(obj.id));
+        const fetched = await fetchRemoteObject(String(obj.id), localUser.id);
         if (fetched && pickContent(fetched)) Object.assign(obj, fetched);
       }
       await tryImportRemoteNote(obj, actorRow);

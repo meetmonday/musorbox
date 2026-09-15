@@ -24,7 +24,7 @@ import {
   unfollowRemoteActor,
 } from "./service";
 import { fetchRemoteActor, refreshRemoteActor } from "./service";
-import { verifyHttpSignature, parseSignature } from "./http-signatures";
+import { verifyHttpSignature, parseSignature, parseSignatureInput } from "./http-signatures";
 import { processIncomingActivity } from "./receive";
 import { buildOrderedCollection, buildOrderedCollectionPage, buildCollection } from "./jsonld";
 import type { RemoteActorRow } from "./service";
@@ -210,33 +210,69 @@ function apDebug(...parts: unknown[]) {
   }
 }
 
-app.post("/users/:username/inbox", async (c) => {
-  const username = c.req.param("username") as string;
-  const user = await getUserRowByUsername(username);
-  if (!user) return c.json({ error: "unknown actor" }, 404);
+function logInbox(msg: Record<string, unknown>): void {
+  try {
+    const line = Object.entries(msg)
+      .map(([k, v]) => `${k}=${typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}`)
+      .join(" ");
+    console.error(`[ap:inbox] ${new Date().toISOString()} ${line}`);
+  } catch {
+    /* noop */
+  }
+}
 
-  if (rateLimited(clientIp(c))) return c.json({ error: "too many requests" }, 429);
+app.post("/users/:username/inbox", async (c) => {
+  const started = Date.now();
+  const username = c.req.param("username") as string;
+  const ip = clientIp(c);
+  logInbox({ recv: username, ip, path: c.req.path });
+
+  const user = await getUserRowByUsername(username);
+  if (!user) {
+    logInbox({ user: username, ip, status: 404, reason: "unknown-local-user", ms: Date.now() - started });
+    return c.json({ error: "unknown actor" }, 404);
+  }
+
+  if (rateLimited(ip)) {
+    logInbox({ user: username, ip, status: 429, reason: "rate-limited", ms: Date.now() - started });
+    return c.json({ error: "too many requests" }, 429);
+  }
 
   const raw = await c.req.text();
-  if (raw.length > MAX_INBOX_SIZE) return c.json({ error: "payload too large" }, 413);
+  if (raw.length > MAX_INBOX_SIZE) {
+    logInbox({ user: username, ip, status: 413, reason: "payload-too-large", ms: Date.now() - started });
+    return c.json({ error: "payload too large" }, 413);
+  }
 
   let doc: Record<string, unknown>;
   try {
     doc = JSON.parse(raw);
   } catch {
+    logInbox({ user: username, ip, status: 400, reason: "invalid-json", ms: Date.now() - started });
     return c.json({ error: "invalid json" }, 400);
   }
-  if (!doc || typeof doc !== "object") return c.json({ error: "invalid activity" }, 400);
+  if (!doc || typeof doc !== "object") {
+    logInbox({ user: username, ip, status: 400, reason: "invalid-activity", ms: Date.now() - started });
+    return c.json({ error: "invalid activity" }, 400);
+  }
 
+  const type = firstType(doc) ?? "?";
+  const docActor = firstString(doc.actor) ?? "?";
   const sigHeader = c.req.header("signature") ?? null;
   const authHeader = c.req.header("authorization") ?? null;
-  apDebug("inbox", { type: doc.type, actorInDoc: doc.actor, sigHeader, authHeader });
+  apDebug("inbox", { type, actorInDoc: docActor, sigHeader, authHeader });
+
   let sp = parseSignature(sigHeader);
   if (!sp && authHeader) {
     const stripped = authHeader.trim().replace(/^Signature\s+/i, "");
     sp = parseSignature(stripped);
   }
-  const keyId = sp?.keyId ?? null;
+  // Modern Mastodon signs inbox deliveries with RFC 9421 `Signature-Input` +
+  // `sig1=:...:`; that form has no keyId in the legacy parser, so pull the
+  // actor key from the input header for the downstream lookup.
+  const si = parseSignatureInput(sigHeader ? c.req.header("signature-input") : null);
+  const keyId = sp?.keyId ?? si?.keyId ?? null;
+  const sigFormat = sp ? "legacy" : si ? "rfc9421" : sigHeader ? "unparsed" : "none";
   let ownerUrl: string | null = null;
   if (keyId) {
     try {
@@ -248,23 +284,31 @@ app.post("/users/:username/inbox", async (c) => {
   apDebug("parsed", { keyId, ownerUrl, sp });
 
   let actor: RemoteActorRow | null = null;
+  let actorSource = "none";
   if (ownerUrl) {
-    actor = (await getRemoteActorByRemoteId(ownerUrl)) ?? (await fetchRemoteActor(ownerUrl));
+    actor = await getRemoteActorByRemoteId(ownerUrl);
+    if (actor) {
+      actorSource = "db";
+    } else {
+      // mastodon.social requires a signed request to fetch remote accounts; signing
+      // with the inbox owner's key lets us bootstrap unknown actors on first contact.
+      actor = await fetchRemoteActor(ownerUrl, { signerUserId: user.id });
+      actorSource = "fetched";
+    }
   }
-  apDebug("actor lookup", { actorId: actor?.remoteId ?? null, fromCache: actor ? "yes" : "no" });
+  apDebug("actor lookup", { actorId: actor?.remoteId ?? null, source: actorSource });
   if (!actor) {
-    apDebug("401 unknown/signed actor");
+    logInbox({ user: username, ip, type, actor: docActor, keyId, ownerUrl, status: 401, reason: "unknown-signed-actor", ms: Date.now() - started });
     return c.json({ error: "unknown/signed actor" }, 401);
   }
 
   // The request must be signed by the key belonging to the actor that authored the payload.
   if (ownerUrl && !(ownerUrl === actor.remoteId || ownerUrl.startsWith(actor.remoteId + "#"))) {
-    apDebug("401 key owner mismatch", { ownerUrl, remoteId: actor.remoteId });
+    logInbox({ user: username, ip, type, actor: docActor, keyId, ownerUrl, actorId: actor.remoteId, status: 401, reason: "key-owner-mismatch", ms: Date.now() - started });
     return c.json({ error: "key owner mismatch" }, 401);
   }
-  const docActor = firstString(doc.actor);
   if (docActor && docActor.split("#")[0] !== actor.remoteId) {
-    apDebug("401 actor mismatch", { docActor, remoteId: actor.remoteId });
+    logInbox({ user: username, ip, type, actor: docActor, keyId, actorId: actor.remoteId, status: 401, reason: "actor-mismatch", ms: Date.now() - started });
     return c.json({ error: "actor mismatch" }, 401);
   }
 
@@ -280,22 +324,39 @@ app.post("/users/:username/inbox", async (c) => {
       sigInputHeader: c.req.header("signature-input"),
       getHeader,
     });
-  let ok = await verify(actor.publicKeyPem);
-  if (!ok && actor) {
+  let ver = await verify(actor.publicKeyPem);
+  if (!ver.ok) {
     // Remote may have rotated its key since we cached the actor; refetch and retry once.
-    const fresh = await refreshRemoteActor(actor.remoteId);
+    const fresh = await refreshRemoteActor(actor.remoteId, user.id);
     if (fresh?.publicKeyPem && fresh.publicKeyPem !== actor.publicKeyPem) {
-      ok = await verify(fresh.publicKeyPem);
+      ver = await verify(fresh.publicKeyPem);
     }
   }
-  if (!ok) {
-    apDebug("401 signature", { type: doc.type, keyId, ownerUrl, actorId: actor.remoteId, sp, headers: c.req.raw.headers });
+  if (!ver.ok) {
+    apDebug("401 signature", { type, keyId, ownerUrl, actorId: actor.remoteId, sp, headers: c.req.raw.headers });
+    logInbox({ user: username, ip, type, actor: docActor, keyId, ownerUrl, actorId: actor.remoteId, sig: sigFormat, actorSource, status: 401, reason: ver.reason, ms: Date.now() - started });
     return c.json({ error: "invalid signature" }, 401);
   }
 
   await processIncomingActivity(doc, actor, username);
+  logInbox({ user: username, ip, type, actor: docActor, actorId: actor.remoteId, sig: sigFormat, actorSource, status: 202, reason: "ok", ms: Date.now() - started });
   return c.body("", 202, { "Content-Type": ACTIVITY_JSON });
 });
+
+function firstType(v: unknown): string | null {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) {
+    for (const item of v) {
+      const t = firstType(item);
+      if (t) return t;
+    }
+    return null;
+  }
+  if (v && typeof v === "object" && typeof (v as Record<string, unknown>).type === "string") {
+    return (v as Record<string, unknown>).type as string;
+  }
+  return null;
+}
 
 function firstString(v: unknown): string | null {
   if (typeof v === "string") return v;

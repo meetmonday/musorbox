@@ -66,7 +66,7 @@ async function enrichWithMentions(note: Record<string, unknown>, actorUserId: nu
     try {
       const actorIri = await resolveRemoteAcct(acct);
       if (!actorIri) continue;
-      const actor = await fetchRemoteActor(actorIri);
+      const actor = await fetchRemoteActor(actorIri, { signerUserId: actorUserId });
       if (!actor || actor.deletedAt) continue;
       const inbox = actor.sharedInboxUrl ?? actor.inboxUrl;
       if (!inbox) continue;

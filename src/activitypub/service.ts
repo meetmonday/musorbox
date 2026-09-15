@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { getDrizzle } from "../core/db";
 import { users, topics, comments, apKeys, apActors, apFollowers, apFollowing, apReactions } from "../core/schema";
 import { config } from "../core/config";
-import { generateRsaKeyPair, signRequest } from "./http-signatures";
+import { generateRsaKeyPair, signRequest, signUrlFetch } from "./http-signatures";
 import { buildActor, buildTopicNote, buildCommentNote, followActivity } from "./jsonld";
 import type { TopicDetail } from "../topics/service";
 import type { TopicComment } from "../comments/service";
@@ -400,7 +400,7 @@ export async function followRemoteActor(localUserId: number, target: string): Pr
     }
   }
 
-  const actor = await fetchRemoteActor(targetUrl);
+  const actor = await fetchRemoteActor(targetUrl, { signerUserId: localUserId });
   if (!actor) return { ok: false, error: "Не удалось получить удалённый профиль" };
   if (!actor.sharedInboxUrl && !actor.inboxUrl) return { ok: false, error: "У аккаунта нет inbox" };
 
@@ -598,7 +598,25 @@ function allowedRemoteFetchUrl(u: URL, wasHttps: boolean): boolean {
   return config.allowInsecureFetchHosts.includes(u.hostname.toLowerCase());
 }
 
-async function fetchRemoteDoc(iri: string, opts: { requireId?: boolean } = {}): Promise<Rec | null> {
+type FetchSigner = { keyId: string; privateKeyPem: string };
+
+async function fetchRemoteDoc(iri: string, opts: { requireId?: boolean; signerUserId?: number } = {}): Promise<Rec | null> {
+  const { requireId = true, signerUserId } = opts;
+
+  // Try unauthenticated first (Pleroma and most instances allow it). If the
+  // host rejects it (mastodon.social returns `401 Request not signed` for
+  // profile fetches), retry with a signed request whose keyId resolves to one
+  // of our own public actors.
+  const doc =
+    (await fetchRemoteDocScan(iri, { requireId, useSign: false })) ??
+    (signerUserId != null ? await fetchRemoteDocScan(iri, { requireId, useSign: true, signerUserId }) : null);
+  return doc;
+}
+
+async function fetchRemoteDocScan(
+  iri: string,
+  opts: { requireId: boolean; useSign: boolean; signerUserId?: number },
+): Promise<Rec | null> {
   let url: URL;
   try {
     url = new URL(iri);
@@ -606,6 +624,14 @@ async function fetchRemoteDoc(iri: string, opts: { requireId?: boolean } = {}): 
     return null;
   }
   if (!allowedRemoteFetchUrl(url, false)) return null;
+
+  let signer: FetchSigner | null = null;
+  if (opts.useSign && opts.signerUserId != null) {
+    const user = await getUserRowById(opts.signerUserId);
+    if (!user) return null;
+    const pair = await getKeyPairForUser(user.id);
+    signer = { keyId: `${config.baseUrl}/users/${user.username}#main-key`, privateKeyPem: pair.privateKeyPem };
+  }
 
   for (let hop = 0; hop < MAX_FETCH_REDIRECTS; hop++) {
     const controller = new AbortController();
@@ -615,6 +641,7 @@ async function fetchRemoteDoc(iri: string, opts: { requireId?: boolean } = {}): 
       res = await fetch(url, {
         headers: {
           Accept: 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams", application/jrd+json',
+          ...(signer ? (await signUrlFetch({ method: "GET", url: url.href, privateKeyPem: signer.privateKeyPem, keyId: signer.keyId })).headers : {}),
         },
         redirect: "manual",
         signal: controller.signal,
@@ -646,7 +673,7 @@ async function fetchRemoteDoc(iri: string, opts: { requireId?: boolean } = {}): 
       const doc = (await res.json()) as unknown;
       if (!doc || typeof doc !== "object") return null;
       const rec = doc as Rec;
-      if (opts.requireId === false) return rec;
+      if (!opts.requireId) return rec;
       return typeof rec.id === "string" ? rec : null;
     } catch {
       return null;
@@ -656,11 +683,11 @@ async function fetchRemoteDoc(iri: string, opts: { requireId?: boolean } = {}): 
 }
 
 /** Fetch a remote actor by its IRI, caching into the DB. */
-export async function fetchRemoteActor(iri: string): Promise<RemoteActorRow | null> {
+export async function fetchRemoteActor(iri: string, base?: { signerUserId?: number }): Promise<RemoteActorRow | null> {
   const cached = await getRemoteActorByRemoteId(iri);
   if (cached) return cached;
 
-  const doc = await fetchRemoteDoc(iri);
+  const doc = await fetchRemoteDoc(iri, { signerUserId: base?.signerUserId });
   if (!doc) return null;
 
   // Only store an actor whose id we actually asked for: prevents a remote host
@@ -675,8 +702,8 @@ export async function fetchRemoteActor(iri: string): Promise<RemoteActorRow | nu
 }
 
 /** Bypass the actor cache: refetch from the remote origin (used to retry after a key rotation). */
-export async function refreshRemoteActor(iri: string): Promise<RemoteActorRow | null> {
-  const doc = await fetchRemoteDoc(iri);
+export async function refreshRemoteActor(iri: string, signerUserId?: number): Promise<RemoteActorRow | null> {
+  const doc = await fetchRemoteDoc(iri, { signerUserId });
   if (!doc) return null;
   try {
     if (new URL(String(doc.id)).origin !== new URL(iri).origin) return null;
@@ -687,8 +714,8 @@ export async function refreshRemoteActor(iri: string): Promise<RemoteActorRow | 
 }
 
 /** Fetch an arbitrary ActivityPub object (not actor) by its IRI. */
-export async function fetchRemoteObject(iri: string): Promise<Record<string, unknown> | null> {
-  return fetchRemoteDoc(iri);
+export async function fetchRemoteObject(iri: string, signerUserId?: number): Promise<Record<string, unknown> | null> {
+  return fetchRemoteDoc(iri, { signerUserId });
 }
 
 /** Upsert a remote actor from a Person/Service/Application doc, and refresh local ghost profile if linked. */
