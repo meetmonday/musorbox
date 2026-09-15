@@ -151,7 +151,7 @@ export const ProfilePage: FC<{
                     <tr>
                       <td>
                         <img
-                          style="margin-right:10px"
+                          style="margin-right:10px;width:90px;height:90px"
                           src={avatarSrc(profile.avatarUrl)}
                           class="left"
                           alt=""
