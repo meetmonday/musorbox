@@ -2,6 +2,7 @@ import { getDrizzle } from "../core/db";
 import { comments, topics, users } from "../core/schema";
 import { asc, eq, sql } from "drizzle-orm";
 import { notifyCommentCreated, notifyCommentDeleted } from "../activitypub/notify";
+import { hydrateAuthorHandles } from "../core/utils";
 
 export type TopicComment = {
   id: number;
@@ -14,6 +15,7 @@ export type TopicComment = {
   authorId: number;
   authorUsername: string;
   authorAvatar: string | null;
+  authorHandle?: string | null;
 };
 
 export async function getComments(topicId: number): Promise<TopicComment[]> {
@@ -35,7 +37,7 @@ export async function getComments(topicId: number): Promise<TopicComment[]> {
     .innerJoin(users, eq(users.id, comments.authorId))
     .where(eq(comments.topicId, topicId))
     .orderBy(asc(comments.createdAt));
-  return rows;
+  return hydrateAuthorHandles(rows);
 }
 
 export async function getCommentById(commentId: number): Promise<TopicComment | undefined> {
@@ -57,7 +59,7 @@ export async function getCommentById(commentId: number): Promise<TopicComment | 
     .innerJoin(users, eq(users.id, comments.authorId))
     .where(eq(comments.id, commentId))
     .limit(1);
-  return rows[0];
+  return (await hydrateAuthorHandles(rows))[0];
 }
 
 export async function getCommentCount(topicId: number): Promise<number> {
@@ -120,5 +122,5 @@ export async function deleteComment(commentId: number, topicId: number): Promise
     .update(topics)
     .set({ commentCount: sql`max(${topics.commentCount} - 1, 0)`, updatedAt: new Date() })
     .where(eq(topics.id, topicId));
-  if (author[0] && !author[0].apUrl) void notifyCommentDeleted(commentId, author[0].authorId);
+  if (author[0] && !author[0].apUrl) void notifyCommentDeleted(commentId, topicId, author[0].authorId);
 }

@@ -48,7 +48,7 @@ const CommentTop: FC<{ comment: TopicComment; showDelete?: boolean }> = ({ comme
       </div>
       <div class="div_header">
         <a rel="nofollow" href={`/users/${comment.authorUsername}/`}>
-          {comment.authorUsername}
+          {comment.authorHandle ?? comment.authorUsername}
         </a>
         <span class="dark">, {formatDate(comment.createdAt)}</span>{" "}
         <a href={`#div_comment_${comment.id}`}>#</a>

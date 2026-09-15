@@ -1,10 +1,10 @@
-import { eq, and, count, desc } from "drizzle-orm";
+import { eq, and, count, desc, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { webcrypto } from "node:crypto";
 import { hash } from "bcryptjs";
 import { randomBytes } from "node:crypto";
 import { getDrizzle } from "../core/db";
-import { users, topics, comments, apKeys, apActors, apFollowers, apFollowing } from "../core/schema";
+import { users, topics, comments, apKeys, apActors, apFollowers, apFollowing, apReactions } from "../core/schema";
 import { config } from "../core/config";
 import { generateRsaKeyPair, signRequest } from "./http-signatures";
 import { buildActor, buildTopicNote, buildCommentNote, followActivity } from "./jsonld";
@@ -66,6 +66,7 @@ export type RemoteActorRow = {
   localUserId: number | null;
   createdAt: Date;
   updatedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 export async function getUserRowByUsername(username: string): Promise<ApUserRow | null> {
@@ -180,10 +181,11 @@ export async function listFollowedActorIds(userId: number, limit: number, offset
       localUserId: apActors.localUserId,
       createdAt: apActors.createdAt,
       updatedAt: apActors.updatedAt,
+      deletedAt: apActors.deletedAt,
     })
     .from(apFollowers)
     .innerJoin(apActors, eq(apActors.id, apFollowers.actorId))
-    .where(eq(apFollowers.localUserId, userId))
+    .where(and(eq(apFollowers.localUserId, userId), isNull(apActors.deletedAt)))
     .orderBy(desc(apFollowers.createdAt))
     .limit(limit)
     .offset(offset);
@@ -240,6 +242,7 @@ export async function listFollowingActors(userId: number, limit: number, offset:
       localUserId: apActors.localUserId,
       createdAt: apActors.createdAt,
       updatedAt: apActors.updatedAt,
+      deletedAt: apActors.deletedAt,
     })
     .from(apFollowing)
     .innerJoin(apActors, eq(apActors.id, apFollowing.actorId))
@@ -683,6 +686,117 @@ export async function refreshRemoteActor(iri: string): Promise<RemoteActorRow | 
   return upsertRemoteActor(doc);
 }
 
+/** Fetch an arbitrary ActivityPub object (not actor) by its IRI. */
+export async function fetchRemoteObject(iri: string): Promise<Record<string, unknown> | null> {
+  return fetchRemoteDoc(iri);
+}
+
+/** Upsert a remote actor from a Person/Service/Application doc, and refresh local ghost profile if linked. */
+export async function refreshActorFromDoc(doc: Record<string, unknown>): Promise<RemoteActorRow | null> {
+  const remoteId = String(doc.id ?? "");
+  if (!remoteId) return null;
+  const actor = await upsertRemoteActor(doc);
+  if (actor.localUserId) {
+    const db = getDrizzle();
+    const icon = doc.icon;
+    const avatarUrl = typeof icon === "string" ? icon : icon && typeof icon === "object" ? String((icon as Rec).url ?? "") : null;
+    const displayName = typeof doc.name === "string" ? doc.name : null;
+    await db
+      .update(users)
+      .set({
+        ...(displayName ? { fullName: displayName } : {}),
+        ...(avatarUrl && avatarUrl.startsWith("http") ? { avatarUrl } : {}),
+      })
+      .where(eq(users.id, actor.localUserId));
+  }
+  return actor;
+}
+
+/** Soft-delete a remote actor and remove all follow relations. */
+export async function markActorDeleted(remoteActorIri: string): Promise<void> {
+  const db = getDrizzle();
+  const actor = await getRemoteActorByRemoteId(remoteActorIri);
+  if (!actor) return;
+  if (actor.deletedAt) return;
+  await db
+    .update(apActors)
+    .set({ deletedAt: new Date() })
+    .where(eq(apActors.id, actor.id));
+  // Remove follow relationships where this actor participates.
+  await db.delete(apFollowers).where(eq(apFollowers.actorId, actor.id));
+  await db.delete(apFollowing).where(eq(apFollowing.actorId, actor.id));
+}
+
+/** Upsert an incoming reaction (Like or Announce). Returns true if newly created. */
+export async function upsertReaction(
+  actorId: number,
+  type: "Like" | "Announce",
+  objectUrl: string,
+  activityId?: string,
+): Promise<boolean> {
+  const db = getDrizzle();
+  const existing = await db
+    .select({ id: apReactions.id })
+    .from(apReactions)
+    .where(and(eq(apReactions.actorId, actorId), eq(apReactions.type, type), eq(apReactions.objectUrl, objectUrl)))
+    .limit(1);
+  if (existing[0]) {
+    if (activityId) {
+      await db.update(apReactions).set({ activityId }).where(eq(apReactions.id, existing[0].id));
+    }
+    return false;
+  }
+  const rows = await db
+    .insert(apReactions)
+    .values({ actorId, type, objectUrl, activityId: activityId ?? null })
+    .returning({ id: apReactions.id });
+  return rows.length > 0;
+}
+
+/** Remove a reaction. Returns true if deleted. */
+export async function removeReaction(actorId: number, type: "Like" | "Announce", objectUrl: string): Promise<boolean> {
+  const db = getDrizzle();
+  const rows = await db
+    .delete(apReactions)
+    .where(and(eq(apReactions.actorId, actorId), eq(apReactions.type, type), eq(apReactions.objectUrl, objectUrl)))
+    .returning({ id: apReactions.id });
+  return rows.length > 0;
+}
+
+export type ReactionLookup = { type: "Like" | "Announce"; objectUrl: string };
+
+/** Stable key for a local object across its URL forms (legacy #comment-N vs the canonically path form). */
+export function reactionObjectKey(ref: LocalObjectRef): string {
+  return ref.kind === "topic"
+    ? `${config.baseUrl}/topics/${ref.topicId}`
+    : `${config.baseUrl}/topics/${ref.topicId}/comments/${ref.commentId}`;
+}
+
+/** Resolve an Undo(Like)/Undo(Announce) whose object is a string pointing at the original activity id. */
+export async function removeReactionByActivityId(actorId: number, activityId: string): Promise<ReactionLookup | null> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ type: apReactions.type, objectUrl: apReactions.objectUrl })
+    .from(apReactions)
+    .where(and(eq(apReactions.actorId, actorId), eq(apReactions.activityId, activityId)))
+    .limit(1);
+  const found = rows[0];
+  if (!found) return null;
+  await removeReaction(actorId, found.type, found.objectUrl);
+  return { type: found.type, objectUrl: found.objectUrl };
+}
+
+/** Find local users by username (case-insensitive match), excluding soft-deleted AP actors. */
+export async function findLocalUsersByUsername(username: string): Promise<{ id: number; username: string }[]> {
+  const db = getDrizzle();
+  return db
+    .select({ id: users.id, username: users.username })
+    .from(users)
+    .innerJoin(apActors, eq(apActors.localUserId, users.id))
+    .where(and(eq(sql`lower(${users.username})`, username.toLowerCase()), isNull(apActors.deletedAt)))
+    .limit(5);
+}
+
 /* ── outbox data ── */
 
 export async function countUserPublished(userId: number): Promise<number> {
@@ -835,6 +949,18 @@ export async function topicNoteById(id: number): Promise<Record<string, unknown>
   return buildTopicNote(rowToDetail(rows[0]));
 }
 
+/** Resolve the topic a comment belongs to (for permalink / canonical-URL checks). */
+export async function commentTopicById(commentId: number): Promise<{ topicId: number; topicSlug: string } | null> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ topicId: comments.topicId, topicSlug: topics.slug })
+    .from(comments)
+    .innerJoin(topics, eq(topics.id, comments.topicId))
+    .where(eq(comments.id, commentId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function commentNoteById(id: number): Promise<Record<string, unknown> | null> {
   const db = getDrizzle();
   const rows = await db
@@ -949,7 +1075,15 @@ export function resolveLocalObject(iri: string): LocalObjectRef | null {
     if (segs.length >= 2 && segs[0] === "topics") {
       const topicId = Number(segs[1]);
       if (Number.isInteger(topicId) && topicId > 0) {
+        // Path-based comment ids: /topics/:id/:slug/comments/:cid
+        if (segs.length >= 4 && segs[segs.length - 2] === "comments") {
+          const commentId = Number(segs[segs.length - 1]);
+          if (Number.isInteger(commentId) && commentId > 0) {
+            return { kind: "comment", topicId, commentId };
+          }
+        }
         const frag = u.hash.replace(/^#/, "");
+        // Legacy fragment ids: /topics/:id/:slug#comment-N
         if (frag) {
           const m = /^comment-(\d+)$/.exec(frag);
           if (m) return { kind: "comment", topicId, commentId: Number(m[1]) };
@@ -964,15 +1098,22 @@ export function resolveLocalObject(iri: string): LocalObjectRef | null {
 }
 
 export async function findTopicIdInAddressing(obj: Record<string, unknown>): Promise<number | null> {
-  const lists = [obj.to, obj.cc];
-  for (const list of lists) {
-    if (Array.isArray(list)) {
-      for (const v of list as unknown[]) {
-        if (typeof v !== "string") continue;
-        const ref = resolveLocalObject(v);
-        if (ref?.kind === "topic") return ref.topicId;
+  const urls: string[] = [];
+  for (const key of ["to", "cc", "context"] as const) {
+    const v = obj[key];
+    if (typeof v === "string") urls.push(v);
+    else if (Array.isArray(v)) for (const x of v as unknown[]) if (typeof x === "string") urls.push(x);
+  }
+  if (Array.isArray(obj.tag)) {
+    for (const t of obj.tag as unknown[]) {
+      if (t && typeof t === "object" && typeof (t as { href?: unknown }).href === "string") {
+        urls.push((t as { href: string }).href);
       }
     }
+  }
+  for (const u of urls) {
+    const ref = resolveLocalObject(u);
+    if (ref?.kind === "topic") return ref.topicId;
   }
   return null;
 }

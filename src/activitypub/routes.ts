@@ -14,6 +14,7 @@ import {
   topicNoteById,
   getRemoteActorByRemoteId,
   commentNoteById,
+  commentTopicById,
   followersPageUrl,
   outboxPageUrl,
   countFollowing,
@@ -476,6 +477,23 @@ app.get("/topics/:id/:slug/replies", async (c) => {
     if (n) notes.push(n);
   }
   return c.body(JSON.stringify(buildCollection(notes, notes.length)), 200, { "Content-Type": ACTIVITY_JSON });
+});
+
+/* Comment notes are first-class resolvable objects at /topics/:id/:slug/comments/:cid */
+app.get("/topics/:id/:slug/comments/:commentId", async (c, next) => {
+  const commentId = Number(c.req.param("commentId")) || 0;
+  const topicRow = await commentTopicById(commentId);
+  if (!topicRow) return next();
+  const topicId = Number(c.req.param("id")) || 0;
+  if (topicId !== topicRow.topicId) return c.json({ error: "not found" }, 404);
+  const note = await commentNoteById(commentId);
+  if (!note) return next();
+  if (!wantsJsonLd(c)) {
+    // HTML browsers: land on the topic page scrolled to the comment.
+    const url = `/topics/${topicRow.topicId}/${topicRow.topicSlug}#div_comment_${commentId}`;
+    return c.redirect(url, 302);
+  }
+  return jsonResponse(c, note);
 });
 
 export default app;

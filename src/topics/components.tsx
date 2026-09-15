@@ -1,6 +1,6 @@
 import type { FC } from "hono/jsx";
 import { formatDate, replyCountText, voteBarWidths, htmlExcerpt, firstImageSrc, stripTags } from "../core/utils";
-import type { TopicListItem, TopicDetail } from "./service";
+import type { TopicListItem, TopicDetail, LeaderboardEntry } from "./service";
 
 export function topicUrl(t: TopicListItem | TopicDetail): string {
   return `/topics/${t.id}/${t.slug}`;
@@ -110,7 +110,7 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
           <div>
             <span class="span_link">
               <a rel="nofollow" href={`/users/${topic.authorUsername}/`}>
-                {topic.authorUsername}
+                {topic.authorHandle ?? topic.authorUsername}
               </a>
               <span class="dark">, {formatDate(topic.createdAt)}</span>
             </span>
@@ -212,8 +212,8 @@ export const FeaturedCarousel: FC<{ items: TopicListItem[] }> = ({ items }) => (
 );
 
 export const Leaderboard: FC<{
-  authors: { id: number; username: string; avatar: string | null; score: number }[];
-  commenters: { id: number; username: string; avatar: string | null; score: number }[];
+  authors: LeaderboardEntry[];
+  commenters: LeaderboardEntry[];
 }> = ({ authors, commenters }) => (
   <noindex>
     <div class="div_block">
@@ -238,7 +238,7 @@ export const Leaderboard: FC<{
                       </td>
                       <td style="vertical-align:middle">
                         <h3>
-                          <a href={`/users/${u.username}/`}>{u.username}</a>
+                          <a href={`/users/${u.username}/`}>{u.handle ?? u.username}</a>
                         </h3>
                       </td>
                     </tr>
@@ -266,7 +266,7 @@ export const Leaderboard: FC<{
                       </td>
                       <td style="vertical-align:middle">
                         <h3>
-                          <a href={`/users/${u.username}/`}>{u.username}</a>
+                          <a href={`/users/${u.username}/`}>{u.handle ?? u.username}</a>
                         </h3>
                       </td>
                     </tr>
@@ -346,7 +346,7 @@ export const TopicMini: FC<{ topic: TopicListItem; showAuthor?: boolean; arrow?:
       {showAuthor ? (
         <>
           {" — "}
-          <a href={`/users/${topic.authorUsername}/`}>{topic.authorUsername}</a>
+          <a href={`/users/${topic.authorUsername}/`}>{topic.authorHandle ?? topic.authorUsername}</a>
         </>
       ) : null}
       {arrow ? " →" : ""}
@@ -372,7 +372,7 @@ export const TopicDetailView: FC<{ topic: TopicDetail; canDelete?: boolean }> = 
             <div>
               <span class="span_link">
                 <a rel="nofollow" href={`/users/${topic.authorUsername}/`}>
-                  {topic.authorUsername}
+                  {topic.authorHandle ?? topic.authorUsername}
                 </a>
                 <span class="dark">, {formatDate(topic.createdAt)}</span>
               </span>

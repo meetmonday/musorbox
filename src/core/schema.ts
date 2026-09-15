@@ -192,6 +192,7 @@ export const apActors = sqliteTable(
     localUserId: integer("local_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   },
   (t) => [
     uniqueIndex("ap_actors_remote_id_idx").on(t.remoteId),
@@ -248,4 +249,42 @@ export const apActivities = sqliteTable(
     targetId: text("target_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
   },
+);
+
+export const apReactions = sqliteTable(
+  "ap_reactions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    actorId: integer("actor_id")
+      .notNull()
+      .references(() => apActors.id, { onDelete: "cascade" }),
+    type: text("type", { enum: ["Like", "Announce"] }).notNull(),
+    objectUrl: text("object_url").notNull(),
+    activityId: text("activity_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ap_reactions_actor_type_object_idx").on(t.actorId, t.type, t.objectUrl),
+    index("ap_reactions_object_idx").on(t.objectUrl),
+    index("ap_reactions_activity_idx").on(t.activityId),
+  ],
+);
+
+export const apMentions = sqliteTable(
+  "ap_mentions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    actorId: integer("actor_id")
+      .notNull()
+      .references(() => apActors.id, { onDelete: "cascade" }),
+    targetLocalUserId: integer("target_local_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    objectUrl: text("object_url").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ap_mentions_actor_target_object_idx").on(t.actorId, t.targetLocalUserId, t.objectUrl),
+    index("ap_mentions_target_user_idx").on(t.targetLocalUserId),
+  ],
 );

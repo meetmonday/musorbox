@@ -121,6 +121,7 @@ export const ProfilePage: FC<{
   remoteProfileUrl?: string | null;
 }> = ({ profile, rating, isOwner, following = [], remoteProfileUrl = null }) => {
   const name = profile.fullName || profile.username;
+  const handle = profile.handle ?? profile.username;
   const registerAt = formatDateDots(profile.createdAt);
   const lastSeen = profile.lastSeenAt ? formatDateDots(profile.lastSeenAt) : registerAt;
   const topicsText = `${profile.topicsCount} ${pluralize(profile.topicsCount, "топик", "топика", "топиков")}`;
@@ -189,7 +190,7 @@ export const ProfilePage: FC<{
                 >
                   <div style="padding:2px 0px">
                     <a href={`/user_topics/${profile.username}/`}>
-                      Все топики {profile.username}
+                      Все топики {handle}
                     </a>{" "}
                     [{topicsText}]
                   </div>
@@ -257,7 +258,7 @@ export const ProfilePage: FC<{
                           <td class="td_rank_pos">
                             <div style="background-color:#ff4d4d" class="white">
                               <div style="padding:5px 10px">
-                                {profile.username} не участвует в рейтинге
+                                {handle} не участвует в рейтинге
                               </div>
                               <table width="100%">
                                 <tbody>

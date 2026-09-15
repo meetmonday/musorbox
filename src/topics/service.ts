@@ -1,7 +1,9 @@
 import { getDrizzle } from "../core/db";
 import { topics, categories, users, tags, topicTags, comments } from "../core/schema";
 import { and, desc, eq, sql, count } from "drizzle-orm";
+import { config } from "../core/config";
 import { notifyTopicCreated, notifyTopicDeleted } from "../activitypub/notify";
+import { hydrateAuthorHandles, hydrateHandles, hydrateSidebarHandles } from "../core/utils";
 
 export type TopicListItem = {
   id: number;
@@ -18,6 +20,7 @@ export type TopicListItem = {
   categoryName: string;
   authorId: number;
   authorUsername: string;
+  authorHandle?: string | null;
   authorAvatar: string | null;
   tags: { id: number; name: string; slug: string }[];
 };
@@ -132,8 +135,16 @@ export async function getTopicsByCategory(
 
   const items = rows.map(mapTopicRow);
   await attachTags(items);
-  return { items, total: totalRows[0]?.n ?? 0 };
+  return { items: await withLastCommenters(items), total: totalRows[0]?.n ?? 0 };
 }
+
+export type SidebarTopic = TopicListItem & {
+  replier: string | null;
+  replierHandle?: string | null;
+  replierAvatar: string | null;
+  replierSubject: string;
+  replierSubjectHandle?: string | null;
+};
 
 export async function getTopicBySlug(id: number, slug?: string): Promise<TopicDetail | null> {
   const db = getDrizzle();
@@ -148,8 +159,9 @@ export async function getTopicBySlug(id: number, slug?: string): Promise<TopicDe
   if (!rows[0]) return null;
   const detail = mapTopicDetail(rows[0]);
   await attachTags([detail]);
+  const [hydrated] = await hydrateAuthorHandles([detail]);
   await db.update(topics).set({ views: sql`${topics.views} + 1` }).where(eq(topics.id, id));
-  return detail;
+  return hydrated ?? detail;
 }
 
 export async function getTopicById(id: number): Promise<TopicDetail | null> {
@@ -167,7 +179,7 @@ export async function getFeaturedTopics(limit: number = 5): Promise<TopicListIte
     .limit(limit);
   const items = rows.map(mapTopicRow);
   await attachTags(items);
-  return items;
+  return hydrateAuthorHandles(items);
 }
 
 export async function getRecentTopics(limit: number = 8): Promise<SidebarTopic[]> {
@@ -183,12 +195,6 @@ export async function getRecentTopics(limit: number = 8): Promise<SidebarTopic[]
   await attachTags(items);
   return withLastCommenters(items);
 }
-
-export type SidebarTopic = TopicListItem & {
-  replier: string | null;
-  replierAvatar: string | null;
-  replierSubject: string;
-};
 
 async function lastReplyMap(
   topicIds: number[],
@@ -258,7 +264,7 @@ async function withLastCommenters(
     items.map((i) => i.id),
     authorByTopic,
   );
-  return items.map((i) => {
+  const enriched = items.map((i) => {
     const info = map.get(i.id);
     return {
       ...i,
@@ -267,6 +273,7 @@ async function withLastCommenters(
       replierSubject: info?.subject ?? i.authorUsername,
     };
   });
+  return hydrateSidebarHandles(enriched);
 }
 
 export async function getHotTopics(limit: number = 8): Promise<SidebarTopic[]> {
@@ -312,9 +319,17 @@ export async function getRecentDiscussions(limit: number = 8): Promise<SidebarTo
   return withLastCommenters(items);
 }
 
+export type LeaderboardEntry = {
+  id: number;
+  username: string;
+  handle?: string | null;
+  avatar: string | null;
+  score: number;
+};
+
 export async function getLeaderboard(): Promise<{
-  authors: { id: number; username: string; avatar: string | null; score: number }[];
-  commenters: { id: number; username: string; avatar: string | null; score: number }[];
+  authors: LeaderboardEntry[];
+  commenters: LeaderboardEntry[];
 }> {
   const db = getDrizzle();
   const authors = await db
@@ -333,7 +348,10 @@ export async function getLeaderboard(): Promise<{
     .orderBy(desc(count(comments.id)))
     .limit(5);
 
-  return { authors, commenters };
+  return {
+    authors: await hydrateHandles(authors),
+    commenters: await hydrateHandles(commenters),
+  };
 }
 
 export async function attachTags(items: TopicListItem[]): Promise<void> {
@@ -421,7 +439,10 @@ export async function createTopic(input: {
 
 export async function deleteTopic(id: number): Promise<void> {
   const db = getDrizzle();
-  const author = await db.select({ authorId: topics.authorId }).from(topics).where(eq(topics.id, id)).limit(1);
+  const topic = await db.select({ authorId: topics.authorId, slug: topics.slug }).from(topics).where(eq(topics.id, id)).limit(1);
   await db.delete(topics).where(eq(topics.id, id));
-  if (author[0]) void notifyTopicDeleted(id, author[0].authorId);
+  if (topic[0]) {
+    const url = topic[0].slug ? `${config.baseUrl}/topics/${id}/${topic[0].slug}` : `${config.baseUrl}/topics/${id}`;
+    void notifyTopicDeleted(id, topic[0].authorId, url);
+  }
 }

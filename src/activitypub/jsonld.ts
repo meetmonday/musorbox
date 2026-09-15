@@ -41,6 +41,7 @@ export function buildActor(
     icon,
     ...(aliases.length ? { alsoKnownAs: aliases } : {}),
     discoverable: true,
+    manuallyApprovesFollowers: false,
     attachment: [
       ...(user.country ? [{ type: "Property", name: "Country", value: user.country }] : []),
       ...(user.city ? [{ type: "Property", name: "City", value: user.city }] : []),
@@ -81,9 +82,14 @@ export function buildTopicNote(topic: TopicDetail): Rec {
   };
 }
 
+/** Canonical resolvable ActivityPub URL of a local comment (no #fragment). */
+export function commentUrl(topicId: number, topicSlug: string, commentId: number): string {
+  return `${config.baseUrl}/topics/${topicId}/${topicSlug}/comments/${commentId}`;
+}
+
 export function buildCommentNote(comment: TopicComment, topic: TopicDetail): Rec {
   const baseUrl = `${config.baseUrl}/topics/${topic.id}/${topic.slug}`;
-  const noteId = `${baseUrl}#comment-${comment.id}`;
+  const noteId = commentUrl(topic.id, topic.slug, comment.id);
   return {
     "@context": [...AS_CONTEXT],
     type: "Note",
@@ -93,8 +99,8 @@ export function buildCommentNote(comment: TopicComment, topic: TopicDetail): Rec
     content: comment.body,
     published: comment.createdAt.toISOString(),
     inReplyTo: comment.parentId
-      ? `${baseUrl}#comment-${comment.parentId}`
-      : `${config.baseUrl}/topics/${topic.id}/${topic.slug}`,
+      ? commentUrl(topic.id, topic.slug, comment.parentId)
+      : baseUrl,
     to: ["https://www.w3.org/ns/activitystreams#Public"],
     cc: [`${config.baseUrl}/users/${topic.authorUsername}/followers`],
     replies: {
@@ -159,6 +165,41 @@ export function acceptActivity(activity: Rec, acceptorId: string): Rec {
     actor: acceptorId,
     object: activity,
   };
+}
+
+export function likeActivity(actorId: string, objectId: string, idOverride?: string): Rec {
+  return {
+    "@context": [...AS_CONTEXT],
+    type: "Like",
+    id: idOverride ?? `${actorId}#likes/${encodeURIComponent(objectId)}`,
+    actor: actorId,
+    object: objectId,
+  };
+}
+
+export function announceActivity(actorId: string, objectId: string, idOverride?: string): Rec {
+  return {
+    "@context": [...AS_CONTEXT],
+    type: "Announce",
+    id: idOverride ?? `${actorId}#announces/${encodeURIComponent(objectId)}`,
+    actor: actorId,
+    object: objectId,
+    to: ["https://www.w3.org/ns/activitystreams#Public"],
+  };
+}
+
+export function undoActivity(activity: Rec, actorId: string, idOverride?: string): Rec {
+  return {
+    "@context": [...AS_CONTEXT],
+    type: "Undo",
+    id: idOverride ?? `${actorId}#undo/${Date.now()}`,
+    actor: actorId,
+    object: activity,
+  };
+}
+
+export function mentionTag(actorUrl: string, name: string): Rec {
+  return { type: "Mention", href: actorUrl, name };
 }
 
 export function buildOrderedCollection(totalItems: number, firstUrl: string | null): Rec {

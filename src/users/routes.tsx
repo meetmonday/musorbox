@@ -5,6 +5,7 @@ import type { UserContext } from "../core/middleware";
 import { layoutWithSidebar } from "../layout/layout";
 import {
   getUserByUsername,
+  getUserByUsernameWithHandle,
   getRatingFor,
   getTopicsByAuthor,
   updateUserProfile,
@@ -41,7 +42,7 @@ type AppContext = Context<{ Variables: UserContext }>;
 
 async function handleProfile(c: AppContext) {
   const username = c.req.param("username") as string;
-  const profile = await getUserByUsername(username);
+  const profile = await getUserByUsernameWithHandle(username);
   if (!profile) return c.notFound();
 
   const current = c.get("user") ?? null;
@@ -110,7 +111,7 @@ app.get("/user_topics/:username/page_topics/:page", getTopicsPage);
 async function getTopicsPage(c: AppContext) {
   const username = c.req.param("username") as string;
   const page = Number(c.req.query("page") ?? c.req.param("page")) || 1;
-  const profile = await getUserByUsername(username);
+  const profile = await getUserByUsernameWithHandle(username);
   if (!profile) return c.notFound();
 
   const [data, sidebar] = await Promise.all([
@@ -119,14 +120,15 @@ async function getTopicsPage(c: AppContext) {
   ]);
   const totalPages = Math.max(1, Math.ceil(data.total / perPage));
   const totalText = `${data.total} ${pluralize(data.total, "топик", "топика", "топиков")}`;
+  const displayName = profile.handle ?? profile.username;
 
   const html = await layoutWithSidebar({
-    title: `Все топики ${username} — ${config.siteName}`,
+    title: `Все топики ${displayName} — ${config.siteName}`,
     user: c.get("user") ?? null,
     sidebar,
     children: (
       <div>
-        <h1 class="h_page_header">Все топики: {username}</h1>
+        <h1 class="h_page_header">Все топики: {displayName}</h1>
         <div class="dark" style="margin-bottom:10px;font-size:1.2em">
           {totalText}
         </div>
