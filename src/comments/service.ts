@@ -2,7 +2,12 @@ import { getDrizzle } from "../core/db";
 import { comments, topics, users } from "../core/schema";
 import { asc, eq, sql } from "drizzle-orm";
 import { notifyCommentCreated, notifyCommentDeleted } from "../activitypub/notify";
-import { hydrateAuthorHandles } from "../core/utils";
+import { hydrateAuthorHandles, isGhostUsername, stripLeadingReplyMentions } from "../core/utils";
+
+/** Drop the auto-added reply mention prefix from third-party (federated) comments. */
+function cleanGhostBody(c: TopicComment): TopicComment {
+  return isGhostUsername(c.authorUsername) ? { ...c, body: stripLeadingReplyMentions(c.body) } : c;
+}
 
 export type TopicComment = {
   id: number;
@@ -37,7 +42,7 @@ export async function getComments(topicId: number): Promise<TopicComment[]> {
     .innerJoin(users, eq(users.id, comments.authorId))
     .where(eq(comments.topicId, topicId))
     .orderBy(asc(comments.createdAt));
-  return hydrateAuthorHandles(rows);
+  return (await hydrateAuthorHandles(rows)).map(cleanGhostBody);
 }
 
 export async function getCommentById(commentId: number): Promise<TopicComment | undefined> {
@@ -59,7 +64,8 @@ export async function getCommentById(commentId: number): Promise<TopicComment | 
     .innerJoin(users, eq(users.id, comments.authorId))
     .where(eq(comments.id, commentId))
     .limit(1);
-  return (await hydrateAuthorHandles(rows))[0];
+  const comment = (await hydrateAuthorHandles(rows))[0];
+  return comment ? cleanGhostBody(comment) : undefined;
 }
 
 export async function getCommentCount(topicId: number): Promise<number> {

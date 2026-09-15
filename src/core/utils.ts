@@ -44,6 +44,69 @@ export async function hydrateHandles<T extends { username: string }>(
   return items.map((i) => ({ ...i, handle: map.get(i.username) ?? i.username }));
 };
 
+/**
+ * Match a single leading mention element (e.g. `<a ... class="mention">@user</a>`,
+ * optionally wrapped in `<span class="h-card">…</span>`) anchored at the start.
+ */
+const MENTION_ELEMENT = new RegExp(
+  '^(?:<span[^>]*class="[^"]*\\bh-card\\b[^"]*"[^>]*>\\s*)?' +
+    '<a\\b[^>]*class="[^"]*\\bmention\\b[^"]*"[^>]*>\\s*@(?:<span\\b[^>]*>)?[^<]*?(?:</span>)?\\s*</a>' +
+    '\\s*(?:</span>)?\\s*',
+  "i",
+);
+
+/** Leading run of whitespace / `<br>` tags before the next mention. */
+const MENTION_SEPARATOR = /^(?:\s|<br\b[^>]*\/?\s*>)+/i;
+
+/**
+ * Strips the mention prefix a federated client auto-prepends when replying to a
+ * post/comment (e.g. `@admin <br><br> текст`). Replies render as comment
+ * branches, so "whom this answers" is already visible and the noise can go.
+ */
+export function stripLeadingReplyMentions(html: string): string {
+  let s = (html ?? "").trim();
+
+  let prefix = mentionRunStart(s);
+  if (prefix) s = s.slice(prefix.length).trim();
+
+  // A leading <p>…</p> that only held the mention run collapses entirely;
+  // otherwise keep the paragraph with the mention run removed from inside.
+  const p = /^<p\b[^>]*>\s*/.exec(s);
+  if (p) {
+    const close = s.indexOf("</p>", p[0].length);
+    if (close !== -1) {
+      const inner = s.slice(p[0].length, close);
+      const innerPrefix = mentionRunStart(inner);
+      if (innerPrefix) {
+        const rest = inner.slice(innerPrefix.length);
+        const restPlain = rest.replace(/^(?:\s|<br\b[^>]*\/?\s*>)+/i, "");
+        s = restPlain === "" ? s.slice(close + 4) : p[0] + rest.trimStart() + s.slice(close);
+      }
+    }
+  }
+  return s.trim();
+}
+
+/** Leading whitespace/<br> plus consecutive mention elements, or null. */
+function mentionRunStart(s: string): string | null {
+  let rest = s;
+  const parts: string[] = [];
+  let found = false;
+  for (let guard = 0; guard < 32; guard++) {
+    const sep = MENTION_SEPARATOR.exec(rest);
+    if (sep) {
+      parts.push(sep[0]);
+      rest = rest.slice(sep[0].length);
+    }
+    const m = MENTION_ELEMENT.exec(rest);
+    if (!m) break;
+    parts.push(m[0]);
+    rest = rest.slice(m[0].length);
+    found = true;
+  }
+  return found ? parts.join("") : null;
+}
+
 const SIDEBAR_FIELDS = ["authorUsername", "replier", "replierSubject"] as const;
 
 /** Hydrates real fedi handles onto sidebar topic rows (author + last replier + subject). */

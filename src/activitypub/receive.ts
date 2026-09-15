@@ -20,7 +20,7 @@ import {
   type LocalObjectRef,
 } from "./service";
 import { addComment, deleteComment } from "../comments/service";
-import { sanitizeHtml } from "../core/utils";
+import { sanitizeHtml, stripLeadingReplyMentions } from "../core/utils";
 import { acceptActivity } from "./jsonld";
 import { sendActivityToInbox } from "./deliver";
 
@@ -372,6 +372,7 @@ async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
   } else {
     content = "";
   }
+  content = stripLeadingReplyMentions(content);
   const attachments = extractImageAttachments(obj);
   if (attachments.length) {
     content += `<br clear="all"/>\n` + attachments.map((u) => `<img src="${u}" alt="" loading="lazy"/>`).join("\n");
@@ -407,7 +408,10 @@ async function tryUpdateRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
 
   let content = pickContent(obj).trim();
   if (!content.replace(/<[^>]*>/g, "").trim()) return;
-  content = renderContentWithCw(obj, sanitizeHtml(content).slice(0, 4000));
+  content = sanitizeHtml(content).slice(0, 4000);
+  content = stripLeadingReplyMentions(content);
+  if (!content.replace(/<[^>]*>/g, "").trim()) return;
+  content = renderContentWithCw(obj, content);
 
   const ghostId = await getGhostUserForRemoteActor(actorRow.id);
   if (!ghostId) return;
