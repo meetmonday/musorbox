@@ -1,0 +1,1 @@
+ALTER TABLE `ap_following` ADD `follow_iri` text;

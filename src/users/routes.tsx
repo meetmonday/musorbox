@@ -14,6 +14,7 @@ import { ThreadList } from "../forum/components";
 import { Pagination } from "../topics/components";
 import { RecentDiscussions, NewOnSite, HotTopics, SidebarAd } from "../sidebar/components";
 import { getHotTopics, getRecentDiscussions, getRecentTopics } from "../topics/service";
+import { listFollowingForUi, remoteActorForLocalUser } from "../activitypub/service";
 import { pluralize } from "../core/utils";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
@@ -45,9 +46,11 @@ async function handleProfile(c: AppContext) {
 
   const current = c.get("user") ?? null;
   const isOwner = current?.id === profile.id;
-  const [rating, sidebar] = await Promise.all([
+  const [rating, sidebar, following, remoteProfile] = await Promise.all([
     getRatingFor(profile.id, profile.ratingOptout),
     renderSidebar(),
+    isOwner ? listFollowingForUi(profile.id) : Promise.resolve([]),
+    remoteActorForLocalUser(profile.id),
   ]);
 
   const html = await layoutWithSidebar({
@@ -57,7 +60,15 @@ async function handleProfile(c: AppContext) {
     head: (
       <link rel="alternate" type="application/activity+json" href={`/users/${username}`} />
     ),
-    children: <ProfilePage profile={profile} rating={rating} isOwner={isOwner} />,
+    children: (
+      <ProfilePage
+        profile={profile}
+        rating={rating}
+        isOwner={isOwner}
+        following={following}
+        remoteProfileUrl={remoteProfile?.remoteId ?? null}
+      />
+    ),
   });
   return c.html(`<!DOCTYPE html>${html}`);
 }

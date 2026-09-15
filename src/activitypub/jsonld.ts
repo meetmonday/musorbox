@@ -19,8 +19,17 @@ export type ActorUser = {
   createdAt: Date;
 };
 
-export function buildActor(user: ActorUser, publicKeyPem: string, publicKeyId?: string): Rec {
+export function buildActor(
+  user: ActorUser,
+  publicKeyPem: string,
+  publicKeyId?: string,
+  opts: { alsoKnownAs?: string[] } = {},
+): Rec {
   const actorUrl = `${config.baseUrl}/users/${user.username}`;
+  const icon = user.avatarUrl
+    ? { type: "Image", url: user.avatarUrl.startsWith("http") ? user.avatarUrl : `${config.baseUrl}${user.avatarUrl}` }
+    : undefined;
+  const aliases = (opts.alsoKnownAs ?? []).filter((a) => typeof a === "string" && a !== actorUrl);
   return {
     "@context": [...AS_CONTEXT],
     type: "Person",
@@ -29,9 +38,9 @@ export function buildActor(user: ActorUser, publicKeyPem: string, publicKeyId?: 
     preferredUsername: user.username,
     name: user.fullName ?? user.username,
     summary: `${user.role === "admin" ? "Admin" : user.role === "editor" ? "Editor" : "Author"} at ${config.siteName}`,
-    icon: user.avatarUrl
-      ? { type: "Image", url: user.avatarUrl.startsWith("http") ? user.avatarUrl : `${config.baseUrl}${user.avatarUrl}` }
-      : undefined,
+    icon,
+    ...(aliases.length ? { alsoKnownAs: aliases } : {}),
+    discoverable: true,
     attachment: [
       ...(user.country ? [{ type: "Property", name: "Country", value: user.country }] : []),
       ...(user.city ? [{ type: "Property", name: "City", value: user.city }] : []),
@@ -132,11 +141,11 @@ export function deleteActivity(objectUrl: string, actorId: string): Rec {
   };
 }
 
-export function followActivity(actorId: string, targetId: string): Rec {
+export function followActivity(actorId: string, targetId: string, idOverride?: string): Rec {
   return {
     "@context": [...AS_CONTEXT],
     type: "Follow",
-    id: `${actorId}#follows/${encodeURIComponent(targetId)}`,
+    id: idOverride ?? `${actorId}#follows/${encodeURIComponent(targetId)}`,
     actor: actorId,
     object: targetId,
   };

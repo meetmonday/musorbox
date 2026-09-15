@@ -1,5 +1,6 @@
 import type { FC } from "hono/jsx";
 import type { UserProfile, RatingInfo } from "./service";
+import type { FollowingUiItem } from "../activitypub/service";
 import { formatDateDots, pluralize } from "../core/utils";
 import { avatarSrc } from "../topics/components";
 
@@ -116,7 +117,9 @@ export const ProfilePage: FC<{
   profile: UserProfile;
   rating: RatingInfo | null;
   isOwner: boolean;
-}> = ({ profile, rating, isOwner }) => {
+  following?: FollowingUiItem[];
+  remoteProfileUrl?: string | null;
+}> = ({ profile, rating, isOwner, following = [], remoteProfileUrl = null }) => {
   const name = profile.fullName || profile.username;
   const registerAt = formatDateDots(profile.createdAt);
   const lastSeen = profile.lastSeenAt ? formatDateDots(profile.lastSeenAt) : registerAt;
@@ -129,12 +132,13 @@ export const ProfilePage: FC<{
   )}`;
 
   return (
-    <form
-      method="post"
-      id="frm_profile"
-      class="text12"
-      action={`/users/${profile.username}/`}
-    >
+    <div>
+      <form
+        method="post"
+        id="frm_profile"
+        class="text12"
+        action={`/users/${profile.username}/`}
+      >
       <input type="hidden" name="edit_profile" value="1" />
       <div style="margin-right:40px">
         <table style="margin-bottom:10px">
@@ -356,6 +360,66 @@ export const ProfilePage: FC<{
           </tbody>
         </table>
       </div>
-    </form>
+      </form>
+      {isOwner ? <FediversePanel username={profile.username} following={following} /> : null}
+      {remoteProfileUrl ? (
+        <div class="dark" style="margin-top:15px;padding:10px;font-size:1.2em">
+          <b>Внешний профиль (ActivityPub):</b>{" "}
+          <a href={remoteProfileUrl} rel="nofollow">
+            {remoteProfileUrl}
+          </a>
+        </div>
+      ) : null}
+    </div>
   );
 };
+
+const FediversePanel: FC<{ username: string; following: FollowingUiItem[] }> = ({
+  username,
+  following,
+}) => (
+  <div class="dark" style="margin-top:15px;padding:10px;font-size:1.2em">
+    <div style="padding-bottom:6px">
+      <b>Подписки (ActivityPub)</b>
+    </div>
+    {following.length ? (
+      <ul style="margin:0;padding-left:18px">
+        {following.map((f) => (
+          <li key={f.id} style="padding:2px 0">
+            <a href={f.remoteId} rel="nofollow">
+              {f.displayName ?? f.preferredUsername}
+            </a>
+            <span style="color:#999"> ({f.host})</span>
+            {f.status === "requested" ? (
+              <span style="color:#ffa500"> — ожидает подтверждения</span>
+            ) : null}
+            <form
+              method="post"
+              action={`/users/${username}/unfollow?actor_id=${f.id}`}
+              style="display:inline;margin-left:8px"
+            >
+              <button type="submit" class="blue" style="padding:1px 8px;border:0;cursor:pointer">
+                Отписаться
+              </button>
+            </form>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <div style="color:#999">Пока ни на кого не подписаны.</div>
+    )}
+    <form method="post" action={`/users/${username}/follow`} style="margin-top:8px">
+      <input
+        type="text"
+        name="target"
+        placeholder="acct:user@host или https://домен/users/имя"
+        size={40}
+        style="border:1px solid #cccccc;padding:2px 4px;font-size:1.1em"
+        required
+      />
+      <button type="submit" class="blue" style="padding:2px 12px;border:0;cursor:pointer">
+        Подписаться
+      </button>
+    </form>
+  </div>
+);

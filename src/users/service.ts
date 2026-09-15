@@ -1,6 +1,7 @@
 import { getDrizzle } from "../core/db";
 import { users, topics, comments, categories } from "../core/schema";
 import { eq, sql, desc, count } from "drizzle-orm";
+import { notifyProfileUpdated } from "../activitypub/notify";
 import type { TopicListItem } from "../topics/service";
 import { mapTopicRow, attachTags, topicSelect } from "../topics/service";
 
@@ -266,5 +267,6 @@ export async function updateUserProfile(
       devices: data.devices?.trim() || null,
     })
     .where(eq(users.id, user.id));
+  void notifyProfileUpdated(user.id);
   return true;
 }

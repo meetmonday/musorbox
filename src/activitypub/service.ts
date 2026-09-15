@@ -1,13 +1,13 @@
-import { eq, count, desc } from "drizzle-orm";
+import { eq, and, count, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { webcrypto } from "node:crypto";
 import { hash } from "bcryptjs";
 import { randomBytes } from "node:crypto";
 import { getDrizzle } from "../core/db";
-import { users, topics, comments, apKeys, apActors, apFollowers } from "../core/schema";
+import { users, topics, comments, apKeys, apActors, apFollowers, apFollowing } from "../core/schema";
 import { config } from "../core/config";
-import { generateRsaKeyPair } from "./http-signatures";
-import { buildActor, buildTopicNote, buildCommentNote } from "./jsonld";
+import { generateRsaKeyPair, signRequest } from "./http-signatures";
+import { buildActor, buildTopicNote, buildCommentNote, followActivity } from "./jsonld";
 import type { TopicDetail } from "../topics/service";
 import type { TopicComment } from "../comments/service";
 
@@ -127,7 +127,30 @@ export async function buildActorForUser(username: string): Promise<Record<string
   const user = await getUserRowByUsername(username);
   if (!user) return null;
   const pair = await getKeyPairForUser(user.id);
-  return buildActor(user, pair.publicKeyPem, `${config.baseUrl}/users/${user.username}#main-key`);
+  const aliases = await listRemoteAliasesForUser(user.id);
+  return buildActor(
+    user,
+    pair.publicKeyPem,
+    `${config.baseUrl}/users/${user.username}#main-key`,
+    { alsoKnownAs: aliases },
+  );
+}
+
+/** Remote actor IRIs that a local account is a mirror of (ghost accounts). */
+export async function listRemoteAliasesForUser(localUserId: number): Promise<string[]> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ remoteId: apActors.remoteId })
+    .from(apActors)
+    .where(eq(apActors.localUserId, localUserId));
+  return rows.map((r) => r.remoteId);
+}
+
+/** Remote actor mapped to a local user id (ghost mirror), if any. */
+export async function getRemoteActorByLocalUserId(localUserId: number): Promise<RemoteActorRow | null> {
+  const db = getDrizzle();
+  const rows = await db.select().from(apActors).where(eq(apActors.localUserId, localUserId)).limit(1);
+  return rows[0] ?? null;
 }
 
 /* ── followers ── */
@@ -188,6 +211,261 @@ export async function deliveryTargetsForUser(userId: number): Promise<string[]> 
     }
   }
   return out;
+}
+
+/* ── following (local user -> remote actor) ── */
+
+export async function countFollowing(userId: number): Promise<number> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ n: count(apFollowing.localUserId) })
+    .from(apFollowing)
+    .where(eq(apFollowing.localUserId, userId));
+  return rows[0]?.n ?? 0;
+}
+
+export async function listFollowingActors(userId: number, limit: number, offset: number): Promise<RemoteActorRow[]> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({
+      id: apActors.id,
+      remoteId: apActors.remoteId,
+      preferredUsername: apActors.preferredUsername,
+      host: apActors.host,
+      displayName: apActors.displayName,
+      avatarUrl: apActors.avatarUrl,
+      inboxUrl: apActors.inboxUrl,
+      sharedInboxUrl: apActors.sharedInboxUrl,
+      publicKeyPem: apActors.publicKeyPem,
+      localUserId: apActors.localUserId,
+      createdAt: apActors.createdAt,
+      updatedAt: apActors.updatedAt,
+    })
+    .from(apFollowing)
+    .innerJoin(apActors, eq(apActors.id, apFollowing.actorId))
+    .where(eq(apFollowing.localUserId, userId))
+    .orderBy(desc(apFollowing.createdAt))
+    .limit(limit)
+    .offset(offset);
+  return rows;
+}
+
+export function followingPageUrl(username: string, page: number, perPage: number): string {
+  return `${config.baseUrl}/users/${username}/following?page=${page}&size=${perPage}`;
+}
+
+export type FollowingUiItem = {
+  id: number;
+  remoteId: string;
+  displayName: string | null;
+  preferredUsername: string;
+  host: string;
+  status: "requested" | "accepted";
+};
+
+export async function listFollowingForUi(userId: number): Promise<FollowingUiItem[]> {
+  const db = getDrizzle();
+  return db
+    .select({
+      id: apActors.id,
+      remoteId: apActors.remoteId,
+      displayName: apActors.displayName,
+      preferredUsername: apActors.preferredUsername,
+      host: apActors.host,
+      status: apFollowing.status,
+    })
+    .from(apFollowing)
+    .innerJoin(apActors, eq(apActors.id, apFollowing.actorId))
+    .where(eq(apFollowing.localUserId, userId))
+    .orderBy(desc(apFollowing.createdAt));
+}
+
+/** Remote actor (if any) that a local account is a mirror of (ghost account). */
+export async function remoteActorForLocalUser(localUserId: number): Promise<{ remoteId: string; host: string } | null> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ remoteId: apActors.remoteId, host: apActors.host })
+    .from(apActors)
+    .where(eq(apActors.localUserId, localUserId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function isFollowing(localUserId: number, actorId: number): Promise<boolean> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ localUserId: apFollowing.localUserId })
+    .from(apFollowing)
+    .where(and(eq(apFollowing.localUserId, localUserId), eq(apFollowing.actorId, actorId)))
+    .limit(1);
+  return Boolean(rows[0]);
+}
+
+export function newFollowIri(localUserIri: string, targetIri: string): string {
+  return `${localUserIri}#follows/${encodeURIComponent(targetIri)}/${Date.now()}`;
+}
+
+export async function addFollowing(localUserId: number, actorId: number, followIri: string): Promise<boolean> {
+  const db = getDrizzle();
+  const rows = await db
+    .insert(apFollowing)
+    .values({ localUserId, actorId, followIri, createdAt: new Date() })
+    .onConflictDoUpdate({
+      target: [apFollowing.localUserId, apFollowing.actorId],
+      set: { followIri, status: "requested", createdAt: new Date() },
+    })
+    .returning({ localUserId: apFollowing.localUserId });
+  return Boolean(rows[0]);
+}
+
+export async function getFollowingFollowIri(localUserId: number, actorId: number): Promise<string | null> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ followIri: apFollowing.followIri })
+    .from(apFollowing)
+    .where(and(eq(apFollowing.localUserId, localUserId), eq(apFollowing.actorId, actorId)))
+    .limit(1);
+  return rows[0]?.followIri ?? null;
+}
+
+export async function markFollowingAccepted(localUserId: number, actorId: number): Promise<void> {
+  const db = getDrizzle();
+  await db
+    .update(apFollowing)
+    .set({ status: "accepted" })
+    .where(and(eq(apFollowing.localUserId, localUserId), eq(apFollowing.actorId, actorId)));
+}
+
+export async function removeFollowing(localUserId: number, actorId: number): Promise<boolean> {
+  const db = getDrizzle();
+  const rows = await db
+    .delete(apFollowing)
+    .where(and(eq(apFollowing.localUserId, localUserId), eq(apFollowing.actorId, actorId)))
+    .returning({ localUserId: apFollowing.localUserId });
+  return Boolean(rows[0]);
+}
+
+/** Resolve `acct:user@host` to an actor IRI via the remote WebFinger endpoint. */
+export async function resolveRemoteAcct(acct: string): Promise<string | null> {
+  const m = /^acct:([^@]+)@([^@]+)$/i.exec(acct.trim());
+  if (!m) return null;
+  const query = `.well-known/webfinger?resource=${encodeURIComponent(acct.trim())}`;
+  // https first, then plain http for hosts explicitly allowed by the insecure-fetch
+  // policy (fetchRemoteDoc rejects http for anything else, so this stays SSRF-safe).
+  const doc =
+    (await fetchRemoteDoc(`https://${m[2]}/${query}`, { requireId: false })) ??
+    (await fetchRemoteDoc(`http://${m[2]}/${query}`, { requireId: false }));
+  if (!doc || !Array.isArray(doc.links)) return null;
+  for (const link of doc.links as unknown[]) {
+    if (!link || typeof link !== "object") continue;
+    const l = link as Rec;
+    if (l.rel === "self" && typeof l.href === "string") {
+      if (typeof l.type === "string" && /activity|ld\+json/i.test(l.type)) return l.href;
+    }
+  }
+  for (const link of doc.links as unknown[]) {
+    if (!link || typeof link !== "object") continue;
+    const l = link as Rec;
+    if (l.rel === "self" && typeof l.href === "string") return l.href;
+  }
+  return null;
+}
+
+export type FollowResult = { ok: boolean; error?: string; actorId?: number };
+
+/**
+ * Follow a remote actor from a local account. Accepts either an `acct:user@host`
+ * handle (resolved via WebFinger) or a direct actor IRI.
+ */
+export async function followRemoteActor(localUserId: number, target: string): Promise<FollowResult> {
+  const user = await getUserRowById(localUserId);
+  if (!user) return { ok: false, error: "Пользователь не найден" };
+
+  const trimmed = target.trim();
+  let targetUrl: string;
+  if (/^acct:/i.test(trimmed)) {
+    const resolved = await resolveRemoteAcct(trimmed);
+    if (!resolved) return { ok: false, error: "Не удалось найти аккаунт по WebFinger" };
+    targetUrl = resolved;
+  } else {
+    try {
+      const u = new URL(trimmed);
+      if (u.protocol !== "https:" && u.protocol !== "http:") return { ok: false, error: "Некорректный адрес профиля" };
+      targetUrl = u.href;
+    } catch {
+      return { ok: false, error: "Некорректный адрес профиля" };
+    }
+  }
+
+  const actor = await fetchRemoteActor(targetUrl);
+  if (!actor) return { ok: false, error: "Не удалось получить удалённый профиль" };
+  if (!actor.sharedInboxUrl && !actor.inboxUrl) return { ok: false, error: "У аккаунта нет inbox" };
+
+  const actorId = actor.id;
+  const localUserIri = `${config.baseUrl}/users/${user.username}`;
+  const followIri = newFollowIri(localUserIri, actor.remoteId);
+  const activity = followActivity(localUserIri, actor.remoteId, followIri);
+  const isNew = await addFollowing(localUserId, actorId, followIri);
+  const inbox = actor.sharedInboxUrl ?? actor.inboxUrl!;
+  const sent = await sendActivityToFollowingInbox(inbox, activity, localUserId);
+  if (isNew && !sent) return { ok: false, error: "Follow отправлен, но удалённый сервер не подтвердил приём" };
+  if (!isNew && !sent) return { ok: false, error: "Не удалось доставить Follow" };
+  return { ok: true, actorId };
+}
+
+/** Unfollow a remote actor we are currently following. */
+export async function unfollowRemoteActor(localUserId: number, actorId: number): Promise<FollowResult> {
+  const user = await getUserRowById(localUserId);
+  if (!user) return { ok: false, error: "Пользователь не найден" };
+  const actor = await getRemoteActorById(actorId);
+  if (!actor) return { ok: false, error: "Аккаунт не найден" };
+  const savedFollowIri = await getFollowingFollowIri(localUserId, actor.id);
+  const removed = await removeFollowing(localUserId, actor.id);
+  if (removed) {
+    const localUserIri = `${config.baseUrl}/users/${user.username}`;
+    const activity = {
+      "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
+      type: "Undo",
+      id: `${localUserIri}#undo/${Date.now()}`,
+      actor: localUserIri,
+      object: followActivity(localUserIri, actor.remoteId, savedFollowIri ?? undefined),
+      to: [actor.remoteId],
+    };
+    const inbox = actor.sharedInboxUrl ?? actor.inboxUrl;
+    if (inbox) await sendActivityToFollowingInbox(inbox, activity, localUserId);
+  }
+  return { ok: true };
+}
+
+/** Delivery helper: sign + POST an activity to a specific inbox using the local user's key. */
+async function sendActivityToFollowingInbox(
+  inbox: string,
+  activity: Record<string, unknown>,
+  userId: number,
+): Promise<boolean> {
+  try {
+    const byId = await getUserRowById(userId);
+    const username = byId?.username;
+    if (!username) return false;
+    const { privateKeyPem } = await getKeyPairForUser(userId);
+    const keyId = `${config.baseUrl}/users/${username}#main-key`;
+    const body = JSON.stringify(activity);
+    const { headers } = await signRequest({ method: "POST", url: inbox, body, privateKeyPem, keyId });
+    const res = await fetch(inbox, {
+      method: "POST",
+      headers: { ...headers, Accept: "application/activity+json" },
+      body,
+      redirect: "follow",
+    });
+    if (!res.ok) {
+      console.error(`[ap] follow send to ${inbox} failed: ${res.status} ${await res.text().catch(() => "")}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[ap] follow send to ${inbox} error: ${(err as Error)?.message}`);
+    return false;
+  }
 }
 
 /* ── remote actors ── */
@@ -317,7 +595,7 @@ function allowedRemoteFetchUrl(u: URL, wasHttps: boolean): boolean {
   return config.allowInsecureFetchHosts.includes(u.hostname.toLowerCase());
 }
 
-async function fetchRemoteDoc(iri: string): Promise<Rec | null> {
+async function fetchRemoteDoc(iri: string, opts: { requireId?: boolean } = {}): Promise<Rec | null> {
   let url: URL;
   try {
     url = new URL(iri);
@@ -333,7 +611,7 @@ async function fetchRemoteDoc(iri: string): Promise<Rec | null> {
     try {
       res = await fetch(url, {
         headers: {
-          Accept: 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams"',
+          Accept: 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams", application/jrd+json',
         },
         redirect: "manual",
         signal: controller.signal,
@@ -360,10 +638,13 @@ async function fetchRemoteDoc(iri: string): Promise<Rec | null> {
 
     if (!res.ok) return null;
     const ct = res.headers.get("content-type") ?? "";
-    if (!/json|activity\+json|ld\+json/i.test(ct)) return null;
+    if (!/json|activity\+json|ld\+json|jrd/i.test(ct)) return null;
     try {
-      const doc = (await res.json()) as Rec;
-      return typeof doc.id === "string" ? doc : null;
+      const doc = (await res.json()) as unknown;
+      if (!doc || typeof doc !== "object") return null;
+      const rec = doc as Rec;
+      if (opts.requireId === false) return rec;
+      return typeof rec.id === "string" ? rec : null;
     } catch {
       return null;
     }
@@ -382,6 +663,18 @@ export async function fetchRemoteActor(iri: string): Promise<RemoteActorRow | nu
   // Only store an actor whose id we actually asked for: prevents a remote host
   // from aliasing stored keys under a foreign origin (which the signature check
   // in the inbox route would then implicitly trust on later requests).
+  try {
+    if (new URL(String(doc.id)).origin !== new URL(iri).origin) return null;
+  } catch {
+    return null;
+  }
+  return upsertRemoteActor(doc);
+}
+
+/** Bypass the actor cache: refetch from the remote origin (used to retry after a key rotation). */
+export async function refreshRemoteActor(iri: string): Promise<RemoteActorRow | null> {
+  const doc = await fetchRemoteDoc(iri);
+  if (!doc) return null;
   try {
     if (new URL(String(doc.id)).origin !== new URL(iri).origin) return null;
   } catch {

@@ -16,8 +16,13 @@ import {
   commentNoteById,
   followersPageUrl,
   outboxPageUrl,
+  countFollowing,
+  listFollowingActors,
+  followingPageUrl,
+  followRemoteActor,
+  unfollowRemoteActor,
 } from "./service";
-import { fetchRemoteActor } from "./service";
+import { fetchRemoteActor, refreshRemoteActor } from "./service";
 import { verifyHttpSignature, parseSignature } from "./http-signatures";
 import { processIncomingActivity } from "./receive";
 import { buildOrderedCollection, buildOrderedCollectionPage, buildCollection } from "./jsonld";
@@ -103,6 +108,19 @@ function resolveActorUrl(url: string): string | null {
 }
 
 /* ── NodeInfo ── */
+
+const hostMeta = (c: any) => {
+  const host = new URL(config.baseUrl).host;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0" xmlns:hm="http://host-meta.net/xrd/1.0">
+ <Link rel="lrdd" type="application/xrd+xml" template="https://${host}/.well-known/webfinger?resource={uri}"/>
+ <Link rel="http://webfinger.net/rel/profile-page" type="text/html" href="${config.baseUrl}/"/>
+</XRD>`;
+  return c.body(xml, 200, { "Content-Type": "application/xrd+xml; charset=utf-8" });
+};
+
+app.get("/host-meta", hostMeta);
+app.get("/.well-known/host-meta", hostMeta);
 
 app.get("/.well-known/nodeinfo", (c) =>
   jsonResponse(c, {
@@ -250,16 +268,25 @@ app.post("/users/:username/inbox", async (c) => {
   }
 
   const getHeader = (name: string) => c.req.header(name);
-  const ok = await verifyHttpSignature({
-    method: "POST",
-    path: c.req.path,
-    body: raw,
-    actorPublicKeyPem: actor.publicKeyPem,
-    sigHeader,
-    authHeader,
-    sigInputHeader: c.req.header("signature-input"),
-    getHeader,
-  });
+  const verify = (pem: string) =>
+    verifyHttpSignature({
+      method: "POST",
+      path: c.req.path,
+      body: raw,
+      actorPublicKeyPem: pem,
+      sigHeader,
+      authHeader,
+      sigInputHeader: c.req.header("signature-input"),
+      getHeader,
+    });
+  let ok = await verify(actor.publicKeyPem);
+  if (!ok && actor) {
+    // Remote may have rotated its key since we cached the actor; refetch and retry once.
+    const fresh = await refreshRemoteActor(actor.remoteId);
+    if (fresh?.publicKeyPem && fresh.publicKeyPem !== actor.publicKeyPem) {
+      ok = await verify(fresh.publicKeyPem);
+    }
+  }
   if (!ok) {
     apDebug("401 signature", { type: doc.type, keyId, ownerUrl, actorId: actor.remoteId, sp, headers: c.req.raw.headers });
     return c.json({ error: "invalid signature" }, 401);
@@ -348,7 +375,78 @@ app.get("/users/:username/following", async (c) => {
   const username = c.req.param("username") as string;
   const user = await getUserRowByUsername(username);
   if (!user) return c.json({ error: "unknown actor" }, 404);
-  return jsonResponse(c, buildOrderedCollection(0, null));
+
+  const total = await countFollowing(user.id);
+  const page = Math.max(1, Number(c.req.query("page")) || 1);
+  const size = Math.min(100, Math.max(1, Number(c.req.query("size")) || 20));
+
+  if (c.req.query("page") === undefined) {
+    return jsonResponse(
+      c,
+      buildOrderedCollection(total, total > 0 ? followingPageUrl(username, 1, size) : null),
+    );
+  }
+
+  const prevPage = page > 1 ? followingPageUrl(username, page - 1, size) : null;
+  const hasNext = page * size < total;
+  const nextPage = hasNext ? followingPageUrl(username, page + 1, size) : null;
+
+  const rows = await listFollowingActors(user.id, size, (page - 1) * size);
+  return jsonResponse(
+    c,
+    buildOrderedCollectionPage(
+      rows.map((r) => r.remoteId),
+      prevPage,
+      nextPage,
+      followingPageUrl(username, page, size),
+    ),
+  );
+});
+
+/* ── Follow / Unfollow (local UI) ── */
+
+app.post("/users/:username/follow", async (c: any) => {
+  const username = c.req.param("username") as string;
+  const me = c.get("user") ?? null;
+  const user = await getUserRowByUsername(username);
+  if (!user) return c.json({ error: "unknown actor" }, 404);
+  if (!me || me.id !== user.id) return c.json({ error: "forbidden" }, 403);
+
+  const target = c.req.query("target") ?? (await formField(c, "target"));
+  if (!target) return c.json({ error: "target is required" }, 400);
+
+  const result = await followRemoteActor(user.id, target);
+  if (c.req.header("accept")?.includes("application/json")) {
+    return c.json(result);
+  }
+  const referer = c.req.header("referer");
+  const back = referer && referer.startsWith(config.baseUrl) ? referer : `/users/${username}/`;
+  return c.redirect(back, result.ok ? 302 : 303);
+});
+
+async function formField(c: any, name: string): Promise<string> {
+  try {
+    const form = await c.req.parseBody();
+    const v = form[name];
+    return typeof v === "string" ? v.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+app.post("/users/:username/unfollow", async (c: any) => {
+  const username = c.req.param("username") as string;
+  const me = c.get("user") ?? null;
+  const user = await getUserRowByUsername(username);
+  if (!user) return c.json({ error: "unknown actor" }, 404);
+  if (!me || me.id !== user.id) return c.json({ error: "forbidden" }, 403);
+
+  const actorId = Number(c.req.query("actor_id")) || 0;
+  const result = await unfollowRemoteActor(user.id, actorId);
+  if (c.req.header("accept")?.includes("application/json")) {
+    return c.json(result);
+  }
+  return c.redirect(c.req.header("referer") ?? `/users/${username}/`);
 });
 
 /* ── Objects (Notes) ── */

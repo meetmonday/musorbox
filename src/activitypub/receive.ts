@@ -7,6 +7,8 @@ import {
   resolveLocalObject,
   findTopicIdInAddressing,
   getUserRowById,
+  markFollowingAccepted,
+  removeFollowing,
   type RemoteActorRow,
 } from "./service";
 import { addComment, deleteComment } from "../comments/service";
@@ -104,13 +106,23 @@ export async function processIncomingActivity(doc: Doc, actorRow: RemoteActorRow
       const target = firstString(inner.object);
       if (target && (target === localIri || target.startsWith(localIri + "/"))) {
         await removeFollower(localUser.id, actorRow.id);
-        await sendAccept(doc, actorRow, localUser.id);
       }
     }
     return;
   }
 
-  if (["Accept", "Reject", "Like", "Announce", "EmojiReact", "Update"].includes(type ?? "")) {
+  if (type === "Accept" || type === "Reject") {
+    await handleFollowOutcome(doc, actorRow, localUser.id, type);
+    return;
+  }
+
+  if (type === "Update") {
+    const obj = doc.object && typeof doc.object === "object" ? (doc.object as Doc) : null;
+    if (obj) await tryUpdateRemoteNote(obj, actorRow);
+    return;
+  }
+
+  if (["Like", "Announce", "EmojiReact", "Flag", "Move", "Block"].includes(type ?? "")) {
     return;
   }
 
@@ -151,6 +163,38 @@ async function removeFollower(localUserId: number, actorId: number): Promise<voi
   await db
     .delete(apFollowers)
     .where(and(eq(apFollowers.localUserId, localUserId), eq(apFollowers.actorId, actorId)));
+}
+
+/**
+ * A remote server accepted (or rejected) a Follow we previously sent from a
+ * local account. Marks the following relation as accepted, or drops it on
+ * Reject. The Accept's object is normally the original Follow activity whose
+ * `object` is our local actor IRI; we verify that when it is available.
+ */
+async function handleFollowOutcome(
+  doc: Doc,
+  actorRow: RemoteActorRow,
+  localUserId: number,
+  outcome: "Accept" | "Reject",
+): Promise<void> {
+  const localUser = await getUserRowById(localUserId);
+  if (!localUser) return;
+  const localIri = `${config.baseUrl}/users/${localUser.username}`;
+
+  const obj = doc.object;
+  const inner = obj && typeof obj === "object" ? (obj as Doc) : null;
+  // The embedded Follow was issued by one of our accounts: its `actor` is our
+  // local IRI, while its `object` is the remote account that accepted/rejected.
+  const innerActor = inner ? firstString(inner.actor) : null;
+  if (innerActor && !(innerActor === localIri || innerActor.startsWith(localIri + "/"))) {
+    return;
+  }
+
+  if (outcome === "Reject") {
+    await removeFollowing(localUserId, actorRow.id);
+  } else {
+    await markFollowingAccepted(localUserId, actorRow.id);
+  }
 }
 
 async function sendAccept(followedActivity: Doc, actorRow: RemoteActorRow, localUserId: number): Promise<void> {
@@ -197,7 +241,17 @@ async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
   }
   if (!topicId) return;
 
-  const content = typeof obj.content === "string" ? sanitizeHtml(obj.content).trim().slice(0, 4000) : "";
+  let content = typeof obj.content === "string" ? sanitizeHtml(obj.content).trim() : "";
+  const plain = content.replace(/<[^>]*>/g, "").trim();
+  if (plain) {
+    content = sanitizeHtml(content).slice(0, 4000);
+  } else {
+    content = "";
+  }
+  const attachments = extractImageAttachments(obj);
+  if (attachments.length) {
+    content += `<br clear="all"/>\n` + attachments.map((u) => `<img src="${u}" alt="" loading="lazy"/>`).join("\n");
+  }
   if (!content.replace(/<[^>]*>/g, "").trim()) return;
 
   const db = getDrizzle();
@@ -218,6 +272,58 @@ async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
   }
 
   await addComment({ topicId, parentId, authorId, body: content, apUrl });
+}
+
+async function tryUpdateRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<void> {
+  const noteType = firstType(obj.type);
+  if (!noteType || !["Note", "Article", "Page", "Question"].includes(noteType)) return;
+  const apUrl = firstString(obj.id) ?? firstString(obj.url);
+  if (!apUrl) return;
+
+  const content = typeof obj.content === "string" ? sanitizeHtml(obj.content).trim().slice(0, 4000) : "";
+  if (!content.replace(/<[^>]*>/g, "").trim()) return;
+
+  const ghostId = await getGhostUserForRemoteActor(actorRow.id);
+  if (!ghostId) return;
+  const db = getDrizzle();
+  const existing = await db
+    .select({ id: comments.id, body: comments.body })
+    .from(comments)
+    .where(and(eq(comments.apUrl, apUrl), eq(comments.authorId, ghostId)))
+    .limit(1);
+  if (!existing[0] || existing[0].body === content) return;
+  await db.update(comments).set({ body: content }).where(eq(comments.id, existing[0].id));
+}
+
+/** Extract https image attachments from an ActivityStreams object. */
+function extractImageAttachments(obj: Doc): string[] {
+  const attach = obj.attachment;
+  if (!Array.isArray(attach)) return [];
+  const out: string[] = [];
+  for (const a of attach as unknown[]) {
+    if (!a || typeof a !== "object") continue;
+    const rec = a as Doc;
+    const mediaType = String(rec.mediaType ?? rec.type ?? "");
+    if (!/^image\/(png|jpe?g|gif|webp|avif)$/i.test(mediaType) && rec.type !== "Image") continue;
+    const url = pickMediaUrl(rec);
+    if (url && /^https?:\/\//i.test(url) && !/\s/.test(url) && url.length <= 2048) out.push(url);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
+function pickMediaUrl(rec: Doc): string | null {
+  const url = rec.url;
+  if (typeof url === "string") return url;
+  if (Array.isArray(url)) {
+    for (const u of url) if (typeof u === "string") return u;
+    return null;
+  }
+  if (url && typeof url === "object") {
+    const s = (url as Doc).href ?? (url as Doc).url;
+    if (typeof s === "string") return s;
+  }
+  return null;
 }
 
 async function tryDeleteByCommentRef(topicId: number, commentId: number, actorRow: RemoteActorRow): Promise<void> {

@@ -217,6 +217,27 @@ export const apFollowers = sqliteTable(
   ],
 );
 
+export const apFollowing = sqliteTable(
+  "ap_following",
+  {
+    localUserId: integer("local_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    actorId: integer("actor_id")
+      .notNull()
+      .references(() => apActors.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["requested", "accepted"] })
+      .notNull()
+      .default("requested"),
+    followIri: text("follow_iri"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.localUserId, t.actorId] }),
+    index("ap_following_actor_idx").on(t.actorId),
+  ],
+);
+
 export const apActivities = sqliteTable(
   "ap_activities",
   {

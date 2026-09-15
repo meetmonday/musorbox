@@ -1,4 +1,4 @@
-import { webcrypto } from "node:crypto";
+import { webcrypto, createPublicKey, verify as nodeVerify } from "node:crypto";
 
 const subtle = webcrypto.subtle;
 
@@ -69,6 +69,26 @@ export async function verifySpki(data: string, signatureB64: string, publicKeyPe
   } catch {
     return false;
   }
+}
+
+/**
+ * Verify an HTTP signature whose public key may be RSA (RSASSA-PKCS1-v1_5 +
+ * SHA-256, the ActivityPub default) or Ed25519 (used by Misskey, newer Pleroma,
+ * and GoToSocial). Ed25519 is not supported by WebCrypto, so it is verified via
+ * node:crypto's `verify(null, ...)` on the Ed25519 SPKI key.
+ */
+export async function verifySignature(data: string, signatureB64: string, publicKeyPem: string): Promise<boolean> {
+  try {
+    const key = createPublicKey(publicKeyPem);
+    if (key.asymmetricKeyType === "ed25519") {
+      const sig = Buffer.from(signatureB64, "base64");
+      if (sig.length !== 64) return false;
+      return nodeVerify(null, Buffer.from(data), key, sig);
+    }
+  } catch {
+    /* fall through to RSA verification below */
+  }
+  return verifySpki(data, signatureB64, publicKeyPem);
 }
 
 export async function sha256Base64(input: string): Promise<string> {
@@ -194,7 +214,7 @@ async function verifyLegacySignature(input: VerifyInput): Promise<boolean> {
   }
 
   const signingString = buildSigningString(input.method, input.path, sp.headers, input.getHeader);
-  return verifySpki(signingString, sp.signature, input.actorPublicKeyPem);
+  return verifySignature(signingString, sp.signature, input.actorPublicKeyPem);
 }
 
 /* ── RFC 9421 (HTTP Message Signatures) ── */
@@ -321,7 +341,7 @@ async function verifyRfc9421Signature(input: VerifyInput): Promise<boolean> {
     return false;
   }
   const signingString = buildRfc9421String(input.method, url, si.components, si.created, si.expires, input.getHeader);
-  return verifySpki(signingString, signature, input.actorPublicKeyPem);
+  return verifySignature(signingString, signature, input.actorPublicKeyPem);
 }
 
 export type SigningInput = {
