@@ -110,7 +110,7 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
           <div>
             <span class="span_link">
               <a rel="nofollow" href={`/users/${topic.authorUsername}/`}>
-                {topic.authorHandle ?? topic.authorUsername}
+                {topic.authorUsername}
               </a>
               <span class="dark">, {formatDate(topic.createdAt)}</span>
             </span>
@@ -238,7 +238,7 @@ export const Leaderboard: FC<{
                       </td>
                       <td style="vertical-align:middle">
                         <h3>
-                          <a href={`/users/${u.username}/`}>{u.handle ?? u.username}</a>
+                          <a href={u.url}>{u.username}</a>
                         </h3>
                       </td>
                     </tr>
@@ -266,7 +266,7 @@ export const Leaderboard: FC<{
                       </td>
                       <td style="vertical-align:middle">
                         <h3>
-                          <a href={`/users/${u.username}/`}>{u.handle ?? u.username}</a>
+                          <a href={u.url}>{u.username}</a>
                         </h3>
                       </td>
                     </tr>
@@ -346,9 +346,9 @@ export const TopicMini: FC<{ topic: TopicListItem; showAuthor?: boolean; arrow?:
       {showAuthor ? (
         <>
           {" — "}
-          <a href={`/users/${topic.authorUsername}/`}>{topic.authorHandle ?? topic.authorUsername}</a>
-        </>
-      ) : null}
+          <a href={`/users/${topic.authorUsername}/`}>{topic.authorUsername}</a>
+        </>)
+      : null}
       {arrow ? " →" : ""}
     </span>
   </div>
@@ -372,7 +372,7 @@ export const TopicDetailView: FC<{ topic: TopicDetail; canDelete?: boolean }> = 
             <div>
               <span class="span_link">
                 <a rel="nofollow" href={`/users/${topic.authorUsername}/`}>
-                  {topic.authorHandle ?? topic.authorUsername}
+                  {topic.authorUsername}
                 </a>
                 <span class="dark">, {formatDate(topic.createdAt)}</span>
               </span>

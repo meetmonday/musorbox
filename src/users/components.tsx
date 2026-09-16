@@ -118,10 +118,9 @@ export const ProfilePage: FC<{
   rating: RatingInfo | null;
   isOwner: boolean;
   following?: FollowingUiItem[];
-  remoteProfileUrl?: string | null;
-}> = ({ profile, rating, isOwner, following = [], remoteProfileUrl = null }) => {
+}> = ({ profile, rating, isOwner, following = [] }) => {
   const name = profile.fullName || profile.username;
-  const handle = profile.handle ?? profile.username;
+  const handle = profile.username;
   const registerAt = formatDateDots(profile.createdAt);
   const lastSeen = profile.lastSeenAt ? formatDateDots(profile.lastSeenAt) : registerAt;
   const topicsText = `${profile.topicsCount} ${pluralize(profile.topicsCount, "топик", "топика", "топиков")}`;
@@ -363,14 +362,6 @@ export const ProfilePage: FC<{
       </div>
       </form>
       {isOwner ? <FediversePanel username={profile.username} following={following} /> : null}
-      {remoteProfileUrl ? (
-        <div class="dark" style="margin-top:15px;padding:10px;font-size:1.2em">
-          <b>Внешний профиль (ActivityPub):</b>{" "}
-          <a href={remoteProfileUrl} rel="nofollow">
-            {remoteProfileUrl}
-          </a>
-        </div>
-      ) : null}
     </div>
   );
 };

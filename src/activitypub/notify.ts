@@ -1,4 +1,4 @@
-import { topicNoteById, commentNoteById, getUserRowById, getKeyPairForUser, buildActorForUser, getRemoteActorByLocalUserId, resolveLocalObject, resolveRemoteAcct, fetchRemoteActor } from "./service";
+import { topicNoteById, commentNoteById, getUserRowById, getKeyPairForUser, buildActorForUser, resolveLocalObject, resolveRemoteAcct, fetchRemoteActor } from "./service";
 import { deliverToUserFollowers, sendActivityToInbox } from "./deliver";
 import { createActivity, deleteActivity, updateActivity, mentionTag } from "./jsonld";
 import { config } from "../core/config";
@@ -103,7 +103,7 @@ async function collectThreadParticipantInboxes(topicId: number): Promise<string[
       sharedInboxUrl: apActors.sharedInboxUrl,
     })
     .from(comments)
-    .innerJoin(apActors, eq(apActors.localUserId, comments.authorId))
+    .innerJoin(apActors, eq(apActors.id, comments.remoteActorId))
     .where(and(eq(comments.topicId, topicId), isNull(apActors.deletedAt)));
   const seen = new Set<string>();
   const inboxes: string[] = [];
@@ -132,10 +132,22 @@ async function deliverToThreadParticipants(
 async function replyTargetIri(ref: { kind: "topic" | "comment"; topicId: number; commentId?: number }): Promise<string | null> {
   if (ref.kind !== "comment" || !ref.commentId) return null;
   const db = getDrizzle();
-  const parent = await db.select({ authorId: comments.authorId }).from(comments).where(eq(comments.id, ref.commentId)).limit(1);
+  const parent = await db
+    .select({ authorId: comments.authorId, remoteActorId: comments.remoteActorId })
+    .from(comments)
+    .where(eq(comments.id, ref.commentId))
+    .limit(1);
   if (!parent[0]) return null;
-  const remote = await getRemoteActorByLocalUserId(parent[0].authorId);
-  return remote?.remoteId ?? null;
+  if (parent[0].remoteActorId != null) {
+    const rows = await db
+      .select({ remoteId: apActors.remoteId })
+      .from(apActors)
+      .where(eq(apActors.id, parent[0].remoteActorId))
+      .limit(1);
+    return rows[0]?.remoteId ?? null;
+  }
+  if (parent[0].authorId != null) return actorUrlForUserId(parent[0].authorId);
+  return null;
 }
 
 export async function notifyTopicDeleted(topicId: number, authorUserId: number, objectUrl?: string): Promise<void> {

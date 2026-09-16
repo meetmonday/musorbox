@@ -3,7 +3,6 @@ import { tags, topicTags, topics, categories, users } from "../core/schema";
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import type { TopicListItem } from "../topics/service";
 import { mapTopicRow, attachTags } from "../topics/service";
-import { hydrateAuthorHandles } from "../core/utils";
 
 const forumSlug = "b_questions";
 
@@ -96,7 +95,7 @@ export async function getForumThreads(
 
   const items = rows.map(mapTopicRow) as TopicListItem[];
   await attachTags(items);
-  return { items: await hydrateAuthorHandles(items), total };
+  return { items, total };
 }
 
 export async function getThreadTags(topicId: number): Promise<TagGroup[]> {

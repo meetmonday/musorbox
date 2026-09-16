@@ -1,9 +1,8 @@
 import { getDrizzle } from "../core/db";
-import { topics, categories, users, tags, topicTags, comments } from "../core/schema";
+import { topics, categories, users, tags, topicTags, comments, apActors } from "../core/schema";
 import { and, desc, eq, sql, count } from "drizzle-orm";
 import { config } from "../core/config";
 import { notifyTopicCreated, notifyTopicDeleted } from "../activitypub/notify";
-import { hydrateAuthorHandles, hydrateHandles, hydrateSidebarHandles } from "../core/utils";
 
 export type TopicListItem = {
   id: number;
@@ -20,7 +19,6 @@ export type TopicListItem = {
   categoryName: string;
   authorId: number;
   authorUsername: string;
-  authorHandle?: string | null;
   authorAvatar: string | null;
   tags: { id: number; name: string; slug: string }[];
 };
@@ -140,10 +138,10 @@ export async function getTopicsByCategory(
 
 export type SidebarTopic = TopicListItem & {
   replier: string | null;
-  replierHandle?: string | null;
+  replierUrl: string | null;
   replierAvatar: string | null;
   replierSubject: string;
-  replierSubjectHandle?: string | null;
+  replierSubjectUrl: string | null;
 };
 
 export async function getTopicBySlug(id: number, slug?: string): Promise<TopicDetail | null> {
@@ -159,9 +157,8 @@ export async function getTopicBySlug(id: number, slug?: string): Promise<TopicDe
   if (!rows[0]) return null;
   const detail = mapTopicDetail(rows[0]);
   await attachTags([detail]);
-  const [hydrated] = await hydrateAuthorHandles([detail]);
   await db.update(topics).set({ views: sql`${topics.views} + 1` }).where(eq(topics.id, id));
-  return hydrated ?? detail;
+  return detail;
 }
 
 export async function getTopicById(id: number): Promise<TopicDetail | null> {
@@ -179,7 +176,7 @@ export async function getFeaturedTopics(limit: number = 5): Promise<TopicListIte
     .limit(limit);
   const items = rows.map(mapTopicRow);
   await attachTags(items);
-  return hydrateAuthorHandles(items);
+  return items;
 }
 
 export async function getRecentTopics(limit: number = 8): Promise<SidebarTopic[]> {
@@ -196,19 +193,42 @@ export async function getRecentTopics(limit: number = 8): Promise<SidebarTopic[]
   return withLastCommenters(items);
 }
 
+type PooledAuthorRow = {
+  localUsername: string | null;
+  localAvatar: string | null;
+  remoteId: number | null;
+  remoteUsername: string | null;
+  remoteHost: string | null;
+  remoteAvatar: string | null;
+  remoteIri: string | null;
+  remoteDeletedAt: Date | null;
+};
+
+type AuthorInfo = { name: string; url: string; avatar: string | null };
+
+function localAuthorInfo(username: string, avatar: string | null): AuthorInfo {
+  return { name: username, url: `/users/${username}/`, avatar };
+}
+
+/** Resolve a comment author (local user or remote actor) into display info. */
+function pooledAuthorInfo(r: PooledAuthorRow): AuthorInfo | null {
+  if (r.remoteId != null && !r.remoteDeletedAt) {
+    const nick = r.remoteUsername ?? "remote";
+    return {
+      name: r.remoteHost ? `@${nick}@${r.remoteHost}` : nick,
+      url: r.remoteIri ?? "",
+      avatar: r.remoteAvatar ?? null,
+    };
+  }
+  if (r.localUsername) return localAuthorInfo(r.localUsername, r.localAvatar);
+  return null;
+}
+
 async function lastReplyMap(
   topicIds: number[],
   topicAuthorByTopic: Map<number, string>,
-): Promise<
-  Map<
-    number,
-    { replier: string | null; replierAvatar: string | null; subject: string }
-  >
-> {
-  const result = new Map<
-    number,
-    { replier: string | null; replierAvatar: string | null; subject: string }
-  >();
+): Promise<Map<number, { replier: AuthorInfo | null; subject: AuthorInfo | null }>> {
+  const result = new Map<number, { replier: AuthorInfo | null; subject: AuthorInfo | null }>();
   if (topicIds.length === 0) return result;
   const db = getDrizzle();
 
@@ -218,11 +238,18 @@ async function lastReplyMap(
       id: comments.id,
       topicId: comments.topicId,
       parentId: comments.parentId,
-      replier: users.username,
-      replierAvatar: users.avatarUrl,
+      localUsername: users.username,
+      localAvatar: users.avatarUrl,
+      remoteId: apActors.id,
+      remoteUsername: apActors.preferredUsername,
+      remoteHost: apActors.host,
+      remoteAvatar: apActors.avatarUrl,
+      remoteIri: apActors.remoteId,
+      remoteDeletedAt: apActors.deletedAt,
     })
     .from(comments)
-    .innerJoin(users, eq(users.id, comments.authorId))
+    .leftJoin(users, eq(users.id, comments.authorId))
+    .leftJoin(apActors, eq(apActors.id, comments.remoteActorId))
     .where(
       sql`${comments.id} IN (SELECT MAX(id) FROM comments WHERE ${comments.topicId} IN (${placeholders}) GROUP BY ${comments.topicId})`,
     );
@@ -230,28 +257,47 @@ async function lastReplyMap(
   const parentIds = lastComments
     .map((c) => c.parentId)
     .filter((p): p is number => p !== null);
-  let parentAuthorByComment = new Map<number, string>();
+  let parentAuthorByComment = new Map<number, AuthorInfo>();
   if (parentIds.length > 0) {
     const parentRows = await db
-      .select({ id: comments.id, username: users.username })
+      .select({
+        parentCommentId: comments.id,
+        localUsername: users.username,
+        localAvatar: users.avatarUrl,
+        remoteId: apActors.id,
+        remoteUsername: apActors.preferredUsername,
+        remoteHost: apActors.host,
+        remoteAvatar: apActors.avatarUrl,
+        remoteIri: apActors.remoteId,
+        remoteDeletedAt: apActors.deletedAt,
+      })
       .from(comments)
-      .innerJoin(users, eq(users.id, comments.authorId))
+      .leftJoin(users, eq(users.id, comments.authorId))
+      .leftJoin(apActors, eq(apActors.id, comments.remoteActorId))
       .where(
         sql`${comments.id} IN (${sql.join(parentIds.map((id) => sql`${id}`), sql`, `)})`,
       );
-    parentAuthorByComment = new Map(parentRows.map((r) => [r.id, r.username]));
+    for (const r of parentRows) {
+      const info = pooledAuthorInfo(r);
+      if (info) parentAuthorByComment.set(r.parentCommentId, info);
+    }
   }
 
-  for (const c of lastComments) {
-    const subject =
-      c.parentId !== null
-        ? parentAuthorByComment.get(c.parentId) ?? topicAuthorByTopic.get(c.topicId) ?? ""
-        : topicAuthorByTopic.get(c.topicId) ?? "";
-    result.set(c.topicId, {
-      replier: c.replier,
-      replierAvatar: c.replierAvatar,
-      subject,
-    });
+  for (const row of lastComments) {
+    const replier = pooledAuthorInfo(row);
+    let subject: AuthorInfo | null;
+    if (row.parentId !== null) {
+      subject =
+        parentAuthorByComment.get(row.parentId) ??
+        (() => {
+          const ta = topicAuthorByTopic.get(row.topicId);
+          return ta ? localAuthorInfo(ta, null) : null;
+        })();
+    } else {
+      const ta = topicAuthorByTopic.get(row.topicId);
+      subject = ta ? localAuthorInfo(ta, null) : null;
+    }
+    result.set(row.topicId, { replier, subject });
   }
   return result;
 }
@@ -264,16 +310,17 @@ async function withLastCommenters(
     items.map((i) => i.id),
     authorByTopic,
   );
-  const enriched = items.map((i) => {
+  return items.map((i) => {
     const info = map.get(i.id);
     return {
       ...i,
-      replier: info?.replier ?? null,
-      replierAvatar: info?.replierAvatar ?? null,
-      replierSubject: info?.subject ?? i.authorUsername,
+      replier: info?.replier?.name ?? null,
+      replierUrl: info?.replier?.url ?? null,
+      replierAvatar: info?.replier?.avatar ?? null,
+      replierSubject: info?.subject?.name ?? i.authorUsername,
+      replierSubjectUrl: info?.subject?.url ?? null,
     };
   });
-  return hydrateSidebarHandles(enriched);
 }
 
 export async function getHotTopics(limit: number = 8): Promise<SidebarTopic[]> {
@@ -321,8 +368,9 @@ export async function getRecentDiscussions(limit: number = 8): Promise<SidebarTo
 
 export type LeaderboardEntry = {
   id: number;
+  kind: "local" | "remote";
   username: string;
-  handle?: string | null;
+  url: string;
   avatar: string | null;
   score: number;
 };
@@ -341,16 +389,48 @@ export async function getLeaderboard(): Promise<{
     .limit(5);
 
   const commenters = await db
-    .select({ id: users.id, username: users.username, avatar: users.avatarUrl, score: count(comments.id) })
+    .select({
+      localId: users.id,
+      localUsername: users.username,
+      localAvatar: users.avatarUrl,
+      remoteId: apActors.id,
+      remoteUsername: apActors.preferredUsername,
+      remoteHost: apActors.host,
+      remoteAvatar: apActors.avatarUrl,
+      remoteIri: apActors.remoteId,
+      remoteDeletedAt: apActors.deletedAt,
+      score: count(comments.id),
+    })
     .from(comments)
-    .innerJoin(users, eq(users.id, comments.authorId))
-    .groupBy(users.id)
+    .leftJoin(users, eq(users.id, comments.authorId))
+    .leftJoin(apActors, eq(apActors.id, comments.remoteActorId))
+    .groupBy(comments.authorId, comments.remoteActorId)
     .orderBy(desc(count(comments.id)))
     .limit(5);
 
   return {
-    authors: await hydrateHandles(authors),
-    commenters: await hydrateHandles(commenters),
+    authors: authors.map((a) => ({
+      id: a.id,
+      kind: "local" as const,
+      username: a.username,
+      url: `/users/${a.username}/`,
+      avatar: a.avatar,
+      score: a.score,
+    })),
+    commenters: commenters
+      .map((c) => {
+        const info = pooledAuthorInfo(c);
+        if (!info) return null;
+        return {
+          id: c.remoteId ?? c.localId ?? 0,
+          kind: (c.remoteId != null ? "remote" : "local") as "local" | "remote",
+          username: info.name,
+          url: info.url,
+          avatar: info.avatar,
+          score: c.score,
+        };
+      })
+      .filter((x): x is LeaderboardEntry => x !== null),
   };
 }
 

@@ -15,7 +15,7 @@ import { ThreadList } from "../forum/components";
 import { Pagination } from "../topics/components";
 import { RecentDiscussions, NewOnSite, HotTopics, SidebarAd } from "../sidebar/components";
 import { getHotTopics, getRecentDiscussions, getRecentTopics } from "../topics/service";
-import { listFollowingForUi, remoteActorForLocalUser } from "../activitypub/service";
+import { listFollowingForUi } from "../activitypub/service";
 import { pluralize } from "../core/utils";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
@@ -47,11 +47,10 @@ async function handleProfile(c: AppContext) {
 
   const current = c.get("user") ?? null;
   const isOwner = current?.id === profile.id;
-  const [rating, sidebar, following, remoteProfile] = await Promise.all([
+  const [rating, sidebar, following] = await Promise.all([
     getRatingFor(profile.id, profile.ratingOptout),
     renderSidebar(),
     isOwner ? listFollowingForUi(profile.id) : Promise.resolve([]),
-    remoteActorForLocalUser(profile.id),
   ]);
 
   const html = await layoutWithSidebar({
@@ -67,7 +66,6 @@ async function handleProfile(c: AppContext) {
         rating={rating}
         isOwner={isOwner}
         following={following}
-        remoteProfileUrl={remoteProfile?.remoteId ?? null}
       />
     ),
   });
@@ -120,7 +118,7 @@ async function getTopicsPage(c: AppContext) {
   ]);
   const totalPages = Math.max(1, Math.ceil(data.total / perPage));
   const totalText = `${data.total} ${pluralize(data.total, "топик", "топика", "топиков")}`;
-  const displayName = profile.handle ?? profile.username;
+  const displayName = profile.username;
 
   const html = await layoutWithSidebar({
     title: `Все топики ${displayName} — ${config.siteName}`,

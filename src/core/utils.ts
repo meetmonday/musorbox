@@ -1,49 +1,3 @@
-import { getDrizzle } from "./db";
-import { apActors, users } from "./schema";
-import { eq, inArray } from "drizzle-orm";
-
-const GHOST_RE = /^fed_[0-9a-f]{12}$/;
-
-/** Whether the username is an auto-mirrored remote user (fed_<hash>). */
-export function isGhostUsername(username: string): boolean {
-  return GHOST_RE.test(username);
-}
-
-/** Map fed_* usernames -> real remote handles (@nick@host), like other platforms show. */
-export async function remoteHandleMap(names: readonly string[]): Promise<Map<string, string>> {
-  const uniq = [...new Set(names.filter((n): n is string => typeof n === "string" && isGhostUsername(n)))];
-  const map = new Map<string, string>();
-  if (!uniq.length) return map;
-  const db = getDrizzle();
-  const userRows = await db.select({ id: users.id, username: users.username }).from(users).where(inArray(users.username, uniq));
-  if (!userRows.length) return map;
-  const actorRows = await db
-    .select({ localUserId: apActors.localUserId, preferredUsername: apActors.preferredUsername, host: apActors.host })
-    .from(apActors)
-    .where(inArray(apActors.localUserId, userRows.map((u) => u.id)));
-  for (const u of userRows) {
-    const a = actorRows.find((x) => x.localUserId === u.id);
-    if (a) map.set(u.username, `@${a.preferredUsername}@${a.host}`);
-  }
-  return map;
-}
-
-/** Adds authorHandle (real fedi handle for ghosts) to topic/comment rows. */
-export async function hydrateAuthorHandles<T extends { authorUsername: string }>(
-  items: T[],
-): Promise<(T & { authorHandle?: string | null })[]> {
-  const map = await remoteHandleMap(items.map((i) => i.authorUsername));
-  return items.map((i) => ({ ...i, authorHandle: map.get(i.authorUsername) ?? i.authorUsername }));
-}
-
-/** Adds handle (real fedi handle for ghosts) to rows keyed by `username`. */
-export async function hydrateHandles<T extends { username: string }>(
-  items: T[],
-): Promise<(T & { handle?: string | null })[]> {
-  const map = await remoteHandleMap(items.map((i) => i.username));
-  return items.map((i) => ({ ...i, handle: map.get(i.username) ?? i.username }));
-};
-
 /**
  * Match a single leading mention element (e.g. `<a ... class="mention">@user</a>`,
  * optionally wrapped in `<span class="h-card">…</span>`) anchored at the start.
@@ -105,28 +59,6 @@ function mentionRunStart(s: string): string | null {
     found = true;
   }
   return found ? parts.join("") : null;
-}
-
-const SIDEBAR_FIELDS = ["authorUsername", "replier", "replierSubject"] as const;
-
-/** Hydrates real fedi handles onto sidebar topic rows (author + last replier + subject). */
-export async function hydrateSidebarHandles<T extends { [K in (typeof SIDEBAR_FIELDS)[number]]?: string | null }>(
-  items: T[],
-): Promise<
-  (T & {
-    authorHandle?: string | null;
-    replierHandle?: string | null;
-    replierSubjectHandle?: string | null;
-  })[]
-> {
-  const names = items.flatMap((i) => SIDEBAR_FIELDS.map((f) => i[f]).filter((n): n is string => typeof n === "string"));
-  const map = await remoteHandleMap(names);
-  return items.map((i) => ({
-    ...i,
-    authorHandle: i.authorUsername ? (map.get(i.authorUsername) ?? i.authorUsername) : null,
-    replierHandle: i.replier ? (map.get(i.replier) ?? i.replier) : null,
-    replierSubjectHandle: i.replierSubject ? (map.get(i.replierSubject) ?? i.replierSubject) : null,
-  }));
 }
 
 const translitMap: Record<string, string> = {

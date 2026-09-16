@@ -4,7 +4,6 @@ import { eq, sql, desc, count } from "drizzle-orm";
 import { notifyProfileUpdated } from "../activitypub/notify";
 import type { TopicListItem } from "../topics/service";
 import { mapTopicRow, attachTags, topicSelect } from "../topics/service";
-import { hydrateAuthorHandles, hydrateHandles } from "../core/utils";
 
 export type UserProfile = {
   id: number;
@@ -24,7 +23,6 @@ export type UserProfile = {
   topicsCount: number;
   discussedTopics: number;
   commentsCount: number;
-  handle?: string | null;
 };
 
 export async function getUserByUsername(username: string): Promise<UserProfile | null> {
@@ -74,9 +72,7 @@ export async function getUserByUsername(username: string): Promise<UserProfile |
 }
 
 export async function getUserByUsernameWithHandle(username: string): Promise<UserProfile | null> {
-  const profile = await getUserByUsername(username);
-  if (!profile) return null;
-  return (await hydrateHandles([profile]))[0] ?? profile;
+  return getUserByUsername(username);
 }
 
 export type RatingEntry = {
@@ -245,7 +241,7 @@ export async function getTopicsByAuthor(
 
   const items = rows.map(mapTopicRow);
   await attachTags(items);
-  return { items: await hydrateAuthorHandles(items), total: totalR[0]?.n ?? 0 };
+  return { items, total: totalR[0]?.n ?? 0 };
 }
 
 export async function updateUserProfile(

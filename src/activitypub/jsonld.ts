@@ -146,7 +146,7 @@ export function buildCommentNote(comment: TopicComment, topic: TopicDetail): Rec
     type: "Note",
     id: noteId,
     url: noteId,
-    attributedTo: `${config.baseUrl}/users/${comment.authorUsername}`,
+    attributedTo: comment.authorIri ?? `${config.baseUrl}/users/${comment.authorUsername}`,
     content,
     published: comment.createdAt.toISOString(),
     inReplyTo: comment.parentId

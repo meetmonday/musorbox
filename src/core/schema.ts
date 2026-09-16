@@ -120,9 +120,8 @@ export const comments = sqliteTable(
       .notNull()
       .references(() => topics.id, { onDelete: "cascade" }),
     parentId: integer("parent_id").references((): any => comments.id, { onDelete: "cascade" }),
-    authorId: integer("author_id")
-      .notNull()
-      .references(() => users.id),
+    authorId: integer("author_id").references(() => users.id),
+    remoteActorId: integer("remote_actor_id").references(() => apActors.id, { onDelete: "cascade" }),
     body: text("body").notNull(),
     apUrl: text("ap_url"),
     votesUp: integer("votes_up").notNull().default(0),
@@ -133,6 +132,7 @@ export const comments = sqliteTable(
     index("comments_topic_idx").on(t.topicId),
     index("comments_parent_idx").on(t.parentId),
     index("comments_author_idx").on(t.authorId),
+    index("comments_remote_actor_idx").on(t.remoteActorId),
     index("comments_ap_url_idx").on(t.apUrl),
   ],
 );

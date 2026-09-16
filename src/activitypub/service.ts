@@ -1,8 +1,5 @@
 import { eq, and, count, desc, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
-import { webcrypto } from "node:crypto";
-import { hash } from "bcryptjs";
-import { randomBytes } from "node:crypto";
 import { getDrizzle } from "../core/db";
 import { users, topics, comments, apKeys, apActors, apFollowers, apFollowing, apReactions } from "../core/schema";
 import { config } from "../core/config";
@@ -10,8 +7,6 @@ import { generateRsaKeyPair, signRequest, signUrlFetch } from "./http-signatures
 import { buildActor, buildTopicNote, buildCommentNote, followActivity } from "./jsonld";
 import type { TopicDetail } from "../topics/service";
 import type { TopicComment } from "../comments/service";
-
-const subtle = webcrypto.subtle;
 
 export type ApUserRow = {
   id: number;
@@ -128,30 +123,7 @@ export async function buildActorForUser(username: string): Promise<Record<string
   const user = await getUserRowByUsername(username);
   if (!user) return null;
   const pair = await getKeyPairForUser(user.id);
-  const aliases = await listRemoteAliasesForUser(user.id);
-  return buildActor(
-    user,
-    pair.publicKeyPem,
-    `${config.baseUrl}/users/${user.username}#main-key`,
-    { alsoKnownAs: aliases },
-  );
-}
-
-/** Remote actor IRIs that a local account is a mirror of (ghost accounts). */
-export async function listRemoteAliasesForUser(localUserId: number): Promise<string[]> {
-  const db = getDrizzle();
-  const rows = await db
-    .select({ remoteId: apActors.remoteId })
-    .from(apActors)
-    .where(eq(apActors.localUserId, localUserId));
-  return rows.map((r) => r.remoteId);
-}
-
-/** Remote actor mapped to a local user id (ghost mirror), if any. */
-export async function getRemoteActorByLocalUserId(localUserId: number): Promise<RemoteActorRow | null> {
-  const db = getDrizzle();
-  const rows = await db.select().from(apActors).where(eq(apActors.localUserId, localUserId)).limit(1);
-  return rows[0] ?? null;
+  return buildActor(user, pair.publicKeyPem, `${config.baseUrl}/users/${user.username}#main-key`);
 }
 
 /* ── followers ── */
@@ -283,16 +255,7 @@ export async function listFollowingForUi(userId: number): Promise<FollowingUiIte
     .orderBy(desc(apFollowing.createdAt));
 }
 
-/** Remote actor (if any) that a local account is a mirror of (ghost account). */
-export async function remoteActorForLocalUser(localUserId: number): Promise<{ remoteId: string; host: string } | null> {
-  const db = getDrizzle();
-  const rows = await db
-    .select({ remoteId: apActors.remoteId, host: apActors.host })
-    .from(apActors)
-    .where(eq(apActors.localUserId, localUserId))
-    .limit(1);
-  return rows[0] ?? null;
-}
+/* ── webmentions ── */
 
 export async function isFollowing(localUserId: number, actorId: number): Promise<boolean> {
   const db = getDrizzle();
@@ -718,25 +681,11 @@ export async function fetchRemoteObject(iri: string, signerUserId?: number): Pro
   return fetchRemoteDoc(iri, { signerUserId });
 }
 
-/** Upsert a remote actor from a Person/Service/Application doc, and refresh local ghost profile if linked. */
+/** Upsert a remote actor from a Person/Service/Application doc. */
 export async function refreshActorFromDoc(doc: Record<string, unknown>): Promise<RemoteActorRow | null> {
   const remoteId = String(doc.id ?? "");
   if (!remoteId) return null;
-  const actor = await upsertRemoteActor(doc);
-  if (actor.localUserId) {
-    const db = getDrizzle();
-    const icon = doc.icon;
-    const avatarUrl = typeof icon === "string" ? icon : icon && typeof icon === "object" ? String((icon as Rec).url ?? "") : null;
-    const displayName = typeof doc.name === "string" ? doc.name : null;
-    await db
-      .update(users)
-      .set({
-        ...(displayName ? { fullName: displayName } : {}),
-        ...(avatarUrl && avatarUrl.startsWith("http") ? { avatarUrl } : {}),
-      })
-      .where(eq(users.id, actor.localUserId));
-  }
-  return actor;
+  return upsertRemoteActor(doc);
 }
 
 /** Soft-delete a remote actor and remove all follow relations. */
@@ -811,17 +760,6 @@ export async function removeReactionByActivityId(actorId: number, activityId: st
   if (!found) return null;
   await removeReaction(actorId, found.type, found.objectUrl);
   return { type: found.type, objectUrl: found.objectUrl };
-}
-
-/** Find local users by username (case-insensitive match), excluding soft-deleted AP actors. */
-export async function findLocalUsersByUsername(username: string): Promise<{ id: number; username: string }[]> {
-  const db = getDrizzle();
-  return db
-    .select({ id: users.id, username: users.username })
-    .from(users)
-    .innerJoin(apActors, eq(apActors.localUserId, users.id))
-    .where(and(eq(sql`lower(${users.username})`, username.toLowerCase()), isNull(apActors.deletedAt)))
-    .limit(5);
 }
 
 /* ── outbox data ── */
@@ -946,9 +884,15 @@ function commentToTopicComment(r: ApCommentRow): TopicComment {
     votesUp: 0,
     votesDown: 0,
     createdAt: r.createdAt,
-    authorId: 0,
+    authorId: null,
+    remoteActorId: null,
+    isRemoteAuthor: false,
+    authorName: r.authorUsername,
     authorUsername: r.authorUsername,
+    authorHandle: r.authorUsername,
     authorAvatar: null,
+    authorProfileUrl: `/users/${r.authorUsername}/`,
+    authorIri: null,
   };
 }
 
@@ -995,13 +939,19 @@ export async function commentNoteById(id: number): Promise<Record<string, unknow
       id: comments.id,
       parentId: comments.parentId,
       body: comments.body,
-      authorUsername: users.username,
+      authorId: comments.authorId,
+      remoteActorId: comments.remoteActorId,
+      localUsername: users.username,
+      remoteIri: apActors.remoteId,
+      remoteUsername: apActors.preferredUsername,
+      remoteHost: apActors.host,
       topicId: comments.topicId,
       topicSlug: topics.slug,
       createdAt: comments.createdAt,
     })
     .from(comments)
-    .innerJoin(users, eq(users.id, comments.authorId))
+    .leftJoin(users, eq(users.id, comments.authorId))
+    .leftJoin(apActors, eq(apActors.id, comments.remoteActorId))
     .innerJoin(topics, eq(topics.id, comments.topicId))
     .where(eq(comments.id, id))
     .limit(1);
@@ -1009,8 +959,27 @@ export async function commentNoteById(id: number): Promise<Record<string, unknow
   if (!row) return null;
   const topic = await topicRowById(row.topicId);
   if (!topic) return null;
+  const isRemote = row.remoteActorId != null;
+  const username = isRemote ? (row.remoteUsername ?? "remote") : (row.localUsername ?? "?");
   return buildCommentNote(
-    { id: row.id, topicId: row.topicId, parentId: row.parentId, body: row.body, votesUp: 0, votesDown: 0, createdAt: row.createdAt, authorId: 0, authorUsername: row.authorUsername, authorAvatar: null },
+    {
+      id: row.id,
+      topicId: row.topicId,
+      parentId: row.parentId,
+      body: row.body,
+      votesUp: 0,
+      votesDown: 0,
+      createdAt: row.createdAt,
+      authorId: isRemote ? null : row.authorId ?? null,
+      remoteActorId: row.remoteActorId ?? null,
+      isRemoteAuthor: isRemote,
+      authorName: username,
+      authorUsername: username,
+      authorHandle: isRemote && row.remoteHost ? `@${username}@${row.remoteHost}` : username,
+      authorAvatar: null,
+      authorProfileUrl: isRemote ? (row.remoteIri ?? "") : `/users/${username}/`,
+      authorIri: isRemote ? row.remoteIri : null,
+    },
     topic,
   );
 }
@@ -1145,66 +1114,8 @@ export async function findTopicIdInAddressing(obj: Record<string, unknown>): Pro
   return null;
 }
 
-export async function getGhostUserForRemoteActor(actorId: number): Promise<number | null> {
-  const db = getDrizzle();
-  const actor = await getRemoteActorById(actorId);
-  if (!actor) return null;
-  if (actor.localUserId) return actor.localUserId;
-
-  const remoteId = actor.remoteId;
-  const hex = Buffer.from(await subtle.digest("SHA-256", new TextEncoder().encode(remoteId))).toString("hex");
-  const base = `fed_${hex.slice(0, 12)}`;
-  const fullName = actor.displayName ?? actor.preferredUsername;
-  const avatarUrl = actor.avatarUrl;
-  const passwordHash = await hash(randomBytes(32).toString("hex"), 10);
-  const insert = (username: string) =>
-    db
-      .insert(users)
-      .values({ username, passwordHash, fullName, role: "user", avatarUrl, wasEverCommenter: true })
-      .onConflictDoNothing()
-      .returning({ id: users.id });
-
-  let rows = await insert(base);
-  if (!rows[0]) {
-    // Either a concurrent import of the same remote actor already created the
-    // ghost (link it), or the 48-bit base name genuinely collides with an
-    // existing user (retry with a fresh random suffix).
-    const raced = await db.query.users.findFirst({ where: eq(users.username, base) });
-    if (raced) {
-      rows = [{ id: raced.id }];
-    } else {
-      for (let tries = 0; tries < 5 && !rows[0]; tries++) {
-        rows = await insert(`${base}_${randomBytes(3).toString("hex")}`);
-      }
-    }
-  }
-  const ghostId = rows[0]?.id ?? null;
-  if (ghostId) {
-    await db.update(apActors).set({ localUserId: ghostId }).where(eq(apActors.id, actor.id));
-  }
-  return ghostId ?? null;
-}
-
 export function noteContentToHtml(obj: Record<string, unknown>): string {
   const content = obj.content;
   if (typeof content === "string") return content;
   return "";
-}
-
-export async function localUserIdForActor(actorId: number): Promise<number | null> {
-  return getGhostUserForRemoteActor(actorId);
-}
-
-export async function deleteLocalCommentIfRemoteAuthor(commentId: number, topicId: number, actorId: number): Promise<boolean> {
-  const db = getDrizzle();
-  const rows = await db
-    .select({ authorId: comments.authorId, topicId: comments.topicId })
-    .from(comments)
-    .where(eq(comments.id, commentId))
-    .limit(1);
-  const comment = rows[0];
-  if (!comment || comment.topicId !== topicId) return false;
-  const ghostId = await getGhostUserForRemoteActor(actorId);
-  if (!ghostId || comment.authorId !== ghostId) return false;
-  return true;
 }

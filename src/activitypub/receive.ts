@@ -3,7 +3,6 @@ import { apFollowers, apActivities, apMentions, users, topics, comments } from "
 import { eq, and, sql } from "drizzle-orm";
 import { config } from "../core/config";
 import {
-  getGhostUserForRemoteActor,
   resolveLocalObject,
   findTopicIdInAddressing,
   getUserRowById,
@@ -384,20 +383,19 @@ async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
   const topic = await db.select({ id: topics.id }).from(topics).where(eq(topics.id, topicId)).limit(1);
   if (!topic[0]) return;
 
-  const authorId = await getGhostUserForRemoteActor(actorRow.id);
-  if (!authorId) return;
+  const remoteActorId = actorRow.id;
 
   const apUrl = String(obj.id ?? obj.url ?? null);
   if (apUrl) {
     const existing = await db
       .select({ id: comments.id })
       .from(comments)
-      .where(and(eq(comments.apUrl, apUrl), eq(comments.authorId, authorId)))
+      .where(and(eq(comments.apUrl, apUrl), eq(comments.remoteActorId, remoteActorId)))
       .limit(1);
     if (existing[0]) return;
   }
 
-  await addComment({ topicId, parentId, authorId, body: content, apUrl });
+  await addComment({ topicId, parentId, remoteActorId, body: content, apUrl });
 }
 
 async function tryUpdateRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<void> {
@@ -413,13 +411,11 @@ async function tryUpdateRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
   if (!content.replace(/<[^>]*>/g, "").trim()) return;
   content = renderContentWithCw(obj, content);
 
-  const ghostId = await getGhostUserForRemoteActor(actorRow.id);
-  if (!ghostId) return;
   const db = getDrizzle();
   const existing = await db
     .select({ id: comments.id, body: comments.body })
     .from(comments)
-    .where(and(eq(comments.apUrl, apUrl), eq(comments.authorId, ghostId)))
+    .where(and(eq(comments.apUrl, apUrl), eq(comments.remoteActorId, actorRow.id)))
     .limit(1);
   if (!existing[0] || existing[0].body === content) return;
   await db.update(comments).set({ body: content }).where(eq(comments.id, existing[0].id));
@@ -457,26 +453,22 @@ function pickMediaUrl(rec: Doc): string | null {
 }
 
 async function tryDeleteByCommentRef(topicId: number, commentId: number, actorRow: RemoteActorRow): Promise<void> {
-  const ghostId = await getGhostUserForRemoteActor(actorRow.id);
-  if (!ghostId) return;
   const db = getDrizzle();
   const comment = await db
-    .select({ id: comments.id, authorId: comments.authorId })
+    .select({ id: comments.id, remoteActorId: comments.remoteActorId })
     .from(comments)
     .where(eq(comments.id, commentId))
     .limit(1);
-  if (!comment[0] || comment[0].authorId !== ghostId) return;
+  if (!comment[0] || comment[0].remoteActorId !== actorRow.id) return;
   await deleteComment(commentId, topicId);
 }
 
 async function tryDeleteRemoteCommentByApUrl(remoteNoteId: string, actorRow: RemoteActorRow): Promise<void> {
-  const ghostId = await getGhostUserForRemoteActor(actorRow.id);
-  if (!ghostId) return;
   const db = getDrizzle();
   const comment = await db
     .select({ id: comments.id, topicId: comments.topicId })
     .from(comments)
-    .where(and(eq(comments.apUrl, remoteNoteId), eq(comments.authorId, ghostId)))
+    .where(and(eq(comments.apUrl, remoteNoteId), eq(comments.remoteActorId, actorRow.id)))
     .limit(1);
   if (!comment[0]) return;
   await deleteComment(comment[0].id, comment[0].topicId);
@@ -537,7 +529,6 @@ async function recordMentions(obj: Doc, actorRow: RemoteActorRow): Promise<void>
         if (u.origin !== new URL(config.baseUrl).origin) continue;
         if (segs.length >= 2 && segs[segs.length - 2] === "users") {
           const name = decodeURIComponent(segs[segs.length - 1]!);
-          if (name.startsWith("fed_")) continue; // ghost accounts aren't mentionable
           const rows = await db.select({ id: users.id }).from(users).where(eq(users.username, name)).limit(1);
           targetId = rows[0]?.id ?? null;
         }
