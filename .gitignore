@@ -24,6 +24,9 @@ dumps
 # Dump-derived site assets (extracted from the original site)
 /public/
 
+# ap:wipe delivery state
+ap_wipe_state.json
+
 # Logs
 logs/
 *.log
