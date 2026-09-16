@@ -64,7 +64,7 @@ app.get("/.well-known/webfinger", async (c) => {
   if (!username) return c.json({ error: "resource not found" }, 404);
 
   const user = await getUserRowByUsername(username);
-  if (!user) return c.json({ error: "resource not found" }, 404);
+  if (!user) return c.json({ error: "resource not found" }, 410);
   const actorUrl = `${config.baseUrl}/users/${user.username}`;
   const host = new URL(config.baseUrl).host;
 
@@ -160,9 +160,12 @@ app.get("/nodeinfo/2.0", async (c) => {
 
 app.get("/users/:username", async (c, next) => {
   const username = c.req.param("username") as string;
-  const actor = await buildActorForUser(username);
-  if (!actor) return next();
   if (!wantsJsonLd(c)) return next();
+  const actor = await buildActorForUser(username);
+  // 410 Gone = аккаунт был и навсегда удалён (требование AP Primer для
+  // tombstone; сам Mastodon отвечает так на удалённых акторов). Это
+  // заставляет удалённый сервер прекратить доставку навсегда.
+  if (!actor) return c.json({ error: "unknown actor" }, 410);
   return jsonResponse(c, actor);
 });
 
@@ -198,6 +201,14 @@ function clientIp(c: any): string {
   );
 }
 
+function uriHost(value: string): string | null {
+  try {
+    return new URL(value).host;
+  } catch {
+    return null;
+  }
+}
+
 function apDebug(...parts: unknown[]) {
   if (!process.env.AP_DEBUG) return;
   try {
@@ -225,12 +236,25 @@ app.post("/users/:username/inbox", async (c) => {
   const started = Date.now();
   const username = c.req.param("username") as string;
   const ip = clientIp(c);
-  logInbox({ recv: username, ip, path: c.req.path });
+  const ua = c.req.header("user-agent") ?? null;
+  const sigHeader = c.req.header("signature") ?? null;
+  let keyId = parseSignature(sigHeader)?.keyId ?? null;
+  const sigHost = keyId ? uriHost(keyId) : null;
+  logInbox({ recv: username, ip, path: c.req.path, ua, keyId, from: sigHost });
 
   const user = await getUserRowByUsername(username);
   if (!user) {
-    logInbox({ user: username, ip, status: 404, reason: "unknown-local-user", ms: Date.now() - started });
-    return c.json({ error: "unknown actor" }, 404);
+    logInbox({
+      user: username,
+      ip,
+      ua,
+      keyId,
+      from: sigHost,
+      status: 410,
+      reason: "unknown-local-user",
+      ms: Date.now() - started,
+    });
+    return c.json({ error: "unknown actor" }, 410);
   }
 
   if (rateLimited(ip)) {
@@ -258,7 +282,6 @@ app.post("/users/:username/inbox", async (c) => {
 
   const type = firstType(doc) ?? "?";
   const docActor = firstString(doc.actor) ?? "?";
-  const sigHeader = c.req.header("signature") ?? null;
   const authHeader = c.req.header("authorization") ?? null;
   apDebug("inbox", { type, actorInDoc: docActor, sigHeader, authHeader });
 
@@ -271,7 +294,7 @@ app.post("/users/:username/inbox", async (c) => {
   // `sig1=:...:`; that form has no keyId in the legacy parser, so pull the
   // actor key from the input header for the downstream lookup.
   const si = parseSignatureInput(sigHeader ? c.req.header("signature-input") : null);
-  const keyId = sp?.keyId ?? si?.keyId ?? null;
+  keyId = sp?.keyId ?? si?.keyId ?? keyId;
   const sigFormat = sp ? "legacy" : si ? "rfc9421" : sigHeader ? "unparsed" : "none";
   let ownerUrl: string | null = null;
   if (keyId) {
