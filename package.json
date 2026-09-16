@@ -10,8 +10,11 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "ap:wipe": "bun run scripts/ap_wipe.ts",
+    "seed:structure": "bun run scripts/seed_structure.ts",
+    "seed:full": "bun run src/core/seed.ts",
+    "seed": "bun run src/core/seed.ts",
     "typecheck": "tsc --noEmit",
-    "seed": "bun run src/core/seed.ts"
   },
   "devDependencies": {
     "@libsql/client": "^0.18.0",
