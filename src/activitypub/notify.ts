@@ -1,4 +1,4 @@
-import { topicNoteById, commentNoteById, getUserRowById, getKeyPairForUser, buildActorForUser, resolveLocalObject, resolveRemoteAcct, fetchRemoteActor } from "./service";
+import { topicNoteById, commentNoteById, getUserRowById, getKeyPairForUser, buildActorForUser, resolveLocalObject, resolveRemoteAcct, fetchRemoteActor, type LocalObjectRef } from "./service";
 import { deliverToUserFollowers, sendActivityToInbox } from "./deliver";
 import { createActivity, deleteActivity, updateActivity, mentionTag } from "./jsonld";
 import { config } from "../core/config";
@@ -26,8 +26,7 @@ export async function notifyCommentCreated(commentId: number, authorUserId: numb
   await enrichWithMentions(note, authorUserId);
 
   const replyTo = note.inReplyTo;
-  let ref: ReturnType<typeof resolveLocalObject> = null;
-  if (typeof replyTo === "string") ref = resolveLocalObject(replyTo);
+  const ref = typeof replyTo === "string" ? await resolveReplyTarget(replyTo) : null;
   if (ref) {
     const parentAuthorIri = await replyTargetIri(ref);
     if (parentAuthorIri) {
@@ -42,6 +41,25 @@ export async function notifyCommentCreated(commentId: number, authorUserId: numb
 
   const activity = createActivity(note);
   deliverToUserFollowers(activity, authorUserId);
+}
+
+/**
+ * Resolve the object a comment replies to. Accepts both musorbox URLs (local
+ * topic / comment copies) and the original remote URL of a federated comment
+ * (the comment's `ap_url`), so a reply to a post imported from another
+ * platform is still delivered to the whole local thread.
+ */
+async function resolveReplyTarget(replyTo: string): Promise<LocalObjectRef | null> {
+  const local = resolveLocalObject(replyTo);
+  if (local) return local;
+  const db = getDrizzle();
+  const rows = await db
+    .select({ topicId: comments.topicId, commentId: comments.id })
+    .from(comments)
+    .where(eq(comments.apUrl, replyTo))
+    .limit(1);
+  if (!rows[0]) return null;
+  return { kind: "comment", topicId: rows[0].topicId, commentId: rows[0].commentId };
 }
 
 const mentionRe = /@([A-Za-z0-9_.\-]+)@([A-Za-z0-9_.\-:]+)/g;
@@ -95,10 +113,11 @@ async function enrichWithMentions(note: Record<string, unknown>, actorUserId: nu
  * follow us or are explicitly mentioned — a reply from a local user inside the
  * thread therefore reaches every remote user who ever posted there.
  */
-async function collectThreadParticipantInboxes(topicId: number): Promise<string[]> {
+export async function collectThreadParticipantInboxes(topicId: number, excludeRemoteActorId?: number): Promise<string[]> {
   const db = getDrizzle();
   const rows = await db
     .select({
+      remoteActorId: comments.remoteActorId,
       inboxUrl: apActors.inboxUrl,
       sharedInboxUrl: apActors.sharedInboxUrl,
     })
@@ -108,6 +127,7 @@ async function collectThreadParticipantInboxes(topicId: number): Promise<string[
   const seen = new Set<string>();
   const inboxes: string[] = [];
   for (const row of rows) {
+    if (excludeRemoteActorId != null && row.remoteActorId === excludeRemoteActorId) continue;
     const inbox = row.sharedInboxUrl ?? row.inboxUrl;
     if (!inbox || inbox.startsWith(config.baseUrl)) continue;
     if (seen.has(inbox)) continue;

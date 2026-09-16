@@ -4,11 +4,23 @@ import { signRequest } from "./http-signatures";
 import { getDrizzle } from "../core/db";
 import { users } from "../core/schema";
 import { eq } from "drizzle-orm";
+import { appendFileSync } from "node:fs";
 
 const inflight = new Set<string>();
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function appendOutboundLog(msg: Record<string, unknown>): void {
+  try {
+    const line = Object.entries(msg)
+      .map(([k, v]) => `${k}=${typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}`)
+      .join(" ");
+    appendFileSync("/tmp/ap-outbound.log", `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    /* noop */
+  }
 }
 
 async function getUserRowByIdFallback(userId: number) {
@@ -89,8 +101,10 @@ async function postSigned(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    appendOutboundLog({ inbox, activity: String(activity.id ?? "?"), status: res.status, error: text.slice(0, 200) });
     throw new Error(`HTTP ${res.status} ${res.statusText} ${text.slice(0, 200)}`);
   }
+  appendOutboundLog({ inbox, activity: String(activity.id ?? "?"), status: res.status });
 }
 
 export async function sendActivityToInbox(
@@ -113,11 +127,15 @@ export async function sendActivityToInbox(
       redirect: "follow",
     });
     if (!res.ok) {
-      console.error(`[ap] send to ${inbox} failed: ${res.status} ${await res.text().catch(() => "")}`);
+      const text = (await res.text().catch(() => "")) as string;
+      appendOutboundLog({ inbox, activity: String(activity.id ?? "?"), status: res.status, error: text.slice(0, 200) });
+      console.error(`[ap] send to ${inbox} failed: ${res.status} ${text}`);
       return false;
     }
+    appendOutboundLog({ inbox, activity: String(activity.id ?? "?"), status: res.status });
     return true;
   } catch (err) {
+    appendOutboundLog({ inbox, activity: String(activity.id ?? "?"), error: `throw:${(err as Error)?.message}` });
     console.error(`[ap] send to ${inbox} error: ${(err as Error)?.message}`);
     return false;
   }

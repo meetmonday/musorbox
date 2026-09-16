@@ -136,7 +136,11 @@ export function commentUrl(topicId: number, topicSlug: string, commentId: number
   return `${config.baseUrl}/topics/${topicId}/${topicSlug}/comments/${commentId}`;
 }
 
-export function buildCommentNote(comment: TopicComment, topic: TopicDetail): Rec {
+export function buildCommentNote(
+  comment: TopicComment,
+  topic: TopicDetail,
+  parentCanonicalUrl: string | null = null,
+): Rec {
   const baseUrl = `${config.baseUrl}/topics/${topic.id}/${topic.slug}`;
   const noteId = commentUrl(topic.id, topic.slug, comment.id);
   const contentWithImages = absolutizeUrls(comment.body);
@@ -150,7 +154,7 @@ export function buildCommentNote(comment: TopicComment, topic: TopicDetail): Rec
     content,
     published: comment.createdAt.toISOString(),
     inReplyTo: comment.parentId
-      ? commentUrl(topic.id, topic.slug, comment.parentId)
+      ? parentCanonicalUrl ?? commentUrl(topic.id, topic.slug, comment.parentId)
       : baseUrl,
     to: ["https://www.w3.org/ns/activitystreams#Public"],
     cc: [`${config.baseUrl}/users/${topic.authorUsername}/followers`],

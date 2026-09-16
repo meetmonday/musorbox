@@ -1,4 +1,4 @@
-import { eq, and, count, desc, isNull, sql } from "drizzle-orm";
+import { eq, and, count, desc, isNull, sql, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { getDrizzle } from "../core/db";
 import { users, topics, comments, apKeys, apActors, apFollowers, apFollowing, apReactions } from "../core/schema";
@@ -843,6 +843,22 @@ export async function listOutboxActivities(
       activity: createActivityHome(note),
     });
   }
+  const parentIds = [
+    ...new Set(
+      commentRows
+        .map((r) => r.parentId)
+        .filter((x): x is number => x != null),
+    ),
+  ];
+  const parentApUrls = new Map<number, string>();
+  if (parentIds.length > 0) {
+    const parents = await db
+      .select({ id: comments.id, apUrl: comments.apUrl })
+      .from(comments)
+      .where(inArray(comments.id, parentIds));
+    for (const p of parents) if (p.apUrl) parentApUrls.set(p.id, p.apUrl);
+  }
+
   for (const r of commentRows) {
     const topicDetail: TopicDetail = rowToDetail({
       id: r.topicId,
@@ -857,7 +873,8 @@ export async function listOutboxActivities(
       createdAt: r.topicCreatedAt,
       updatedAt: r.topicUpdatedAt,
     });
-    const note = buildCommentNote(commentToTopicComment(r), topicDetail);
+    const parentUrl = r.parentId != null ? parentApUrls.get(r.parentId) ?? null : null;
+    const note = buildCommentNote(commentToTopicComment(r), topicDetail, parentUrl);
     items.push({
       ts: r.createdAt.getTime(),
       publishedAt: r.createdAt.toISOString(),
@@ -961,6 +978,7 @@ export async function commentNoteById(id: number): Promise<Record<string, unknow
   if (!topic) return null;
   const isRemote = row.remoteActorId != null;
   const username = isRemote ? (row.remoteUsername ?? "remote") : (row.localUsername ?? "?");
+  const parentUrl = row.parentId != null ? await commentCanonicalUrl(row.parentId) : null;
   return buildCommentNote(
     {
       id: row.id,
@@ -981,7 +999,21 @@ export async function commentNoteById(id: number): Promise<Record<string, unknow
       authorIri: isRemote ? row.remoteIri : null,
     },
     topic,
+    parentUrl,
   );
+}
+
+/**
+ * Canonical ActivityPub URL a comment should reference in `inReplyTo`: for a
+ * federated (remote) comment this is its original URL on the author's server,
+ * so remote platforms thread our reply under their own status instead of
+ * treating it as a brand-new post. Local comments have no AP URL and fall back
+ * to the musorbox copy URL.
+ */
+async function commentCanonicalUrl(commentId: number): Promise<string | null> {
+  const db = getDrizzle();
+  const rows = await db.select({ apUrl: comments.apUrl }).from(comments).where(eq(comments.id, commentId)).limit(1);
+  return rows[0]?.apUrl ?? null;
 }
 
 async function topicRowById(rowId: number): Promise<TopicDetail | null> {

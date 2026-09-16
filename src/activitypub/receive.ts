@@ -20,8 +20,9 @@ import {
 } from "./service";
 import { addComment, deleteComment } from "../comments/service";
 import { sanitizeHtml, stripLeadingReplyMentions } from "../core/utils";
-import { acceptActivity } from "./jsonld";
+import { acceptActivity, announceActivity } from "./jsonld";
 import { sendActivityToInbox } from "./deliver";
+import { collectThreadParticipantInboxes } from "./notify";
 
 type Doc = Record<string, unknown>;
 
@@ -260,7 +261,10 @@ export async function processIncomingActivity(doc: Doc, actorRow: RemoteActorRow
         const fetched = await fetchRemoteObject(String(obj.id), localUser.id);
         if (fetched && pickContent(fetched)) Object.assign(obj, fetched);
       }
-      await tryImportRemoteNote(obj, actorRow);
+      const imported = await tryImportRemoteNote(obj, actorRow);
+      if (imported.commentId && imported.isGenuineReply) {
+        await relayRemoteReply(doc, actorRow, localUser.id, imported.commentId);
+      }
       await recordMentions(obj, actorRow);
     }
     return;
@@ -330,21 +334,24 @@ async function sendAccept(followedActivity: Doc, actorRow: RemoteActorRow, local
   await sendActivityToInbox(inbox, accept, localUserId);
 }
 
-async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<void> {
+async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<{ commentId: number; isGenuineReply: boolean }> {
   const noteType = firstType(obj.type);
-  if (!noteType || !["Note", "Article", "Page", "Question"].includes(noteType)) return;
+  if (!noteType || !["Note", "Article", "Page", "Question"].includes(noteType)) return { commentId: 0, isGenuineReply: false };
 
   const replyTo = firstString(obj.inReplyTo);
 
   let topicId: number | null = null;
   let parentId: number | null = null;
+  let isGenuineReply = false;
   if (replyTo) {
     const replyRef = resolveLocalObject(replyTo);
     if (replyRef?.kind === "comment") {
       topicId = replyRef.topicId;
       parentId = replyRef.commentId;
+      isGenuineReply = true;
     } else if (replyRef?.kind === "topic") {
       topicId = replyRef.topicId;
+      isGenuineReply = true;
     } else if (!replyRef) {
       const db = getDrizzle();
       const row = await db
@@ -355,13 +362,14 @@ async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
       if (row[0]) {
         topicId = row[0].topicId;
         parentId = row[0].id;
+        isGenuineReply = true;
       }
     }
   }
   if (!topicId) {
     topicId = await findTopicIdInAddressing(obj);
   }
-  if (!topicId) return;
+  if (!topicId) return { commentId: 0, isGenuineReply: false };
 
   let content = pickContent(obj);
   content = sanitizeHtml(content).trim();
@@ -376,12 +384,12 @@ async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
   if (attachments.length) {
     content += `<br clear="all"/>\n` + attachments.map((u) => `<img src="${u}" alt="" loading="lazy"/>`).join("\n");
   }
-  if (!content.replace(/<[^>]*>/g, "").trim()) return;
+  if (!content.replace(/<[^>]*>/g, "").trim()) return { commentId: 0, isGenuineReply: false };
   content = renderContentWithCw(obj, content);
 
   const db = getDrizzle();
   const topic = await db.select({ id: topics.id }).from(topics).where(eq(topics.id, topicId)).limit(1);
-  if (!topic[0]) return;
+  if (!topic[0]) return { commentId: 0, isGenuineReply: false };
 
   const remoteActorId = actorRow.id;
 
@@ -392,10 +400,49 @@ async function tryImportRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<
       .from(comments)
       .where(and(eq(comments.apUrl, apUrl), eq(comments.remoteActorId, remoteActorId)))
       .limit(1);
-    if (existing[0]) return;
+    if (existing[0]) return { commentId: 0, isGenuineReply: false };
   }
 
-  await addComment({ topicId, parentId, remoteActorId, body: content, apUrl });
+  const commentId = await addComment({ topicId, parentId, remoteActorId, body: content, apUrl });
+  return { commentId, isGenuineReply };
+}
+
+/**
+ * Forward a freshly imported remote reply to every other remote participant of
+ * the same topic thread. The replying server only delivers a Create to the
+ * reply's direct parent, so without this relay the rest of the thread — e.g.
+ * the original Mastodon poster — never learns about the nested reply and the
+ * conversation starts to diverge across instances.
+ *
+ * The relay sends an Announce authored and signed by the local user instead of
+ * re-forwarding the original remote Create: we have no signing key for the
+ * remote author, so re-sending their activity under our key would carry an
+ * HTTP signature that contradicts the activity's `actor`, which strict servers
+ * reject. Recipients fetch the announced object by id and thread it themselves.
+ */
+async function relayRemoteReply(
+  activity: Doc,
+  senderActorRow: RemoteActorRow,
+  localUserId: number,
+  newCommentId: number,
+): Promise<void> {
+  const db = getDrizzle();
+  const rows = await db
+    .select({ topicId: comments.topicId })
+    .from(comments)
+    .where(eq(comments.id, newCommentId))
+    .limit(1);
+  const topicId = rows[0]?.topicId;
+  if (!topicId) return;
+  const objectId = typeof activity.object === "string" ? activity.object : firstString((activity.object as Doc | null)?.id);
+  if (!objectId) return;
+  const user = await getUserRowById(localUserId);
+  if (!user) return;
+  const announce = announceActivity(`${config.baseUrl}/users/${user.username}`, objectId);
+  const inboxes = await collectThreadParticipantInboxes(topicId, senderActorRow.id);
+  for (const inbox of inboxes) {
+    await sendActivityToInbox(inbox, announce, localUserId);
+  }
 }
 
 async function tryUpdateRemoteNote(obj: Doc, actorRow: RemoteActorRow): Promise<void> {
