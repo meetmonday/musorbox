@@ -13,6 +13,7 @@ services:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
       AP_ALLOW_INSECURE_HOSTS: ${AP_ALLOW_INSECURE_HOSTS:-}
       AP_DEBUG: ${AP_DEBUG:-0}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
     # Optional: run as your host user so DB/upload files aren't root-owned.
     # needs HOME writable (the image default /root is not).
     # user: "${UID:-1000}:${GID:-1000}"
