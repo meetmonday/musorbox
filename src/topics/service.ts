@@ -1,6 +1,6 @@
-import { getDrizzle } from "../core/db";
+import { getDb, getDrizzle } from "../core/db";
 import { topics, categories, users, tags, topicTags, comments, apActors } from "../core/schema";
-import { and, desc, eq, sql, count } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, count } from "drizzle-orm";
 import { config } from "../core/config";
 import { notifyTopicCreated, notifyTopicDeleted, notifyTopicUpdated } from "../activitypub/notify";
 
@@ -138,6 +138,43 @@ export async function getTopicsByCategory(
   const items = rows.map(mapTopicRow);
   await attachTags(items);
   return { items: await withLastCommenters(items), total: totalRows[0]?.n ?? 0 };
+}
+
+export async function searchTopics(query: string, page: number, limit: number) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return { items: [], total: 0, page: 1 };
+  const db = getDrizzle();
+  const requested = Math.max(1, Number.isSafeInteger(page) ? page : 1);
+  const { rows, total, current } = db.transaction((tx) => {
+    // SQLite lower()/LIKE не учитывают регистр кириллицы. Читаем по одной
+    // записи, сохраняя только ID нужной и последней страниц, без HTML всей ленты.
+    const candidates = getDb().query<{ id: number; title: string; body: string }, []>(`
+      SELECT topics.id, topics.title, topics.body FROM topics
+      INNER JOIN categories ON categories.id = topics.category_id
+      INNER JOIN users ON users.id = topics.author_id
+      WHERE topics.hidden = 0 ORDER BY topics.created_at DESC, topics.id DESC
+    `);
+    let total = 0;
+    const selected: number[] = [];
+    let lastPage: number[] = [];
+    for (const topic of candidates.iterate()) {
+      if (!topic.title.toLowerCase().includes(needle) && !topic.body.toLowerCase().includes(needle)) continue;
+      if (total % limit === 0) lastPage = [];
+      lastPage.push(topic.id);
+      if (Math.floor(total / limit) + 1 === requested) selected.push(topic.id);
+      total++;
+    }
+    const current = Math.min(requested, Math.max(1, Math.ceil(total / limit)));
+    const ids = selected.length ? selected : lastPage;
+    const rows = ids.length ? tx.select(topicSelect).from(topics)
+      .innerJoin(categories, eq(categories.id, topics.categoryId))
+      .innerJoin(users, eq(users.id, topics.authorId))
+      .where(inArray(topics.id, ids)).orderBy(desc(topics.createdAt), desc(topics.id)).all() : [];
+    return { rows, total, current };
+  });
+  const items = rows.map(mapTopicRow);
+  await attachTags(items);
+  return { items, total, page: current };
 }
 
 export type SidebarTopic = TopicListItem & {

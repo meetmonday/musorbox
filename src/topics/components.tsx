@@ -286,7 +286,8 @@ export const Pagination: FC<{
   total: number;
   perPage: number;
   basePath: string;
-}> = ({ page, total, perPage, basePath }) => {
+  query?: Record<string, string>;
+}> = ({ page, total, perPage, basePath, query }) => {
   const pages = Math.max(1, Math.ceil(total / perPage));
   const current = Math.min(page, pages);
   const items: (number | string)[] = [];
@@ -303,7 +304,8 @@ export const Pagination: FC<{
     if (last !== "..") items.push("..");
   }
 
-  const pageUrl = (p: number) => `${basePath}/page_topics/${p}/`;
+  const suffix = query ? `?${new URLSearchParams(query)}` : "";
+  const pageUrl = (p: number) => `${basePath}/page_topics/${p}/${suffix}`;
 
   return (
     <div class="div_navigator_new">

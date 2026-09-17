@@ -1,3 +1,4 @@
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { config } from "../core/config";
 import type { UserContext } from "../core/middleware";
@@ -5,6 +6,7 @@ import { layoutWithSidebar } from "../layout/layout";
 import {
   getTopicsByCategory,
   getTopicBySlug,
+  searchTopics,
   getRecentTopics,
   getRecentDiscussions,
   getLeaderboard,
@@ -474,6 +476,43 @@ app.get("/public/all_topics", (c) => renderAllTopics(c, Number(c.req.query("page
 app.get("/public/all_topics/page_topics/:page", (c) =>
   renderAllTopics(c, Number(c.req.param("page")) || 1),
 );
+
+async function renderSearch(c: Context<{ Variables: UserContext }>, page: number) {
+  const query = (c.req.query("string") ?? "").trim();
+  const result = await searchTopics(query, page, config.pageSize);
+  const sidebar = await renderSidebar();
+  const html = await layoutWithSidebar({
+    title: `Поиск по сайту — ${config.siteName}`,
+    user: c.get("user") ?? null,
+    sidebar,
+    children: (
+      <div>
+        <h1 class="h_page_header">Поиск по сайту</h1>
+        <div class="div_block">
+          <form method="get" action="/public/search/">
+            <label for="input_search_page" class="dark">Поиск по заголовкам и текстам топиков:</label>
+            <br />
+            <input id="input_search_page" type="text" name="string" value={query} class="input_auth" />
+            {" "}
+            <input type="submit" value="Найти" />
+          </form>
+          <p class="dark">
+            {!query ? "Введите слово или фразу для поиска." : result.total === 0
+              ? "Ничего не найдено. Попробуйте другое слово или фразу."
+              : `Найдено топиков: ${result.total}`}
+          </p>
+        </div>
+        {result.items.map((topic) => <TopicCard key={topic.id} topic={topic} />)}
+        <Pagination page={result.page} total={result.total} perPage={config.pageSize}
+          basePath="/public/search" query={{ string: query }} />
+      </div>
+    ),
+  });
+  return c.html(`<!DOCTYPE html>${html}`);
+}
+
+app.get("/public/search", (c) => renderSearch(c, Number(c.req.query("page")) || 1));
+app.get("/public/search/page_topics/:page", (c) => renderSearch(c, Number(c.req.param("page")) || 1));
 
 void titleBySlug;
 
