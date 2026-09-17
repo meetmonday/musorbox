@@ -1,0 +1,28 @@
+name: musorbox
+
+services:
+  app:
+    build: .
+    container_name: musorbox
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      DB_PATH: /data/musorbox.db
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+      AP_ALLOW_INSECURE_HOSTS: ${AP_ALLOW_INSECURE_HOSTS:-}
+      AP_DEBUG: ${AP_DEBUG:-0}
+    # Optional: run as your host user so DB/upload files aren't root-owned.
+    # needs HOME writable (the image default /root is not).
+    # user: "${UID:-1000}:${GID:-1000}"
+    # environment:
+    #   HOME: /tmp
+    volumes:
+      # SQLite DB lives on the host
+      - ./data:/data
+      # static assets + uploads (writable; editor writes public/uploads)
+      - ./public:/app/public
+    ports:
+      # only for local debugging — the tunnel doesn't need this
+      - "${APP_PORT:-3000}:3000"

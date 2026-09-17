@@ -1,0 +1,27 @@
+# git / VCS
+.git
+.gitignore
+
+# deps
+node_modules
+
+# runtime DBs + ap state
+*.db
+*.db-wal
+*.db-shm
+data
+ap_wipe_state.json
+
+# archived pages & site assets
+dumps
+public
+
+# env
+.env
+.env.*
+!/.env.example
+
+# misc
+logs
+*.log
+coverage

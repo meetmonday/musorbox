@@ -85,6 +85,58 @@ src/
   sidebar/         # виджеты сайдбара
 ```
 
+## Запуск в Docker (с Cloudflare Tunnel)
+
+Приложение и cloudflared живут в одном контейнере; база и статика —
+снаружи (volumes). Туннель поднимается только если задан `TUNNEL_TOKEN`.
+
+### Первый запуск
+
+```bash
+cp .env.example .env
+# заполните в .env: TUNNEL_TOKEN, PUBLIC_BASE_URL=https://your.domain, SESSION_SECRET
+
+mkdir -p data
+# опционально: перенести существующую БД (сначала остановить локальный сервер)
+# cp musorbox.db data/
+
+docker compose up -d --build
+docker compose ps        # контейнер должен быть (healthy)
+curl http://localhost:3000
+```
+
+Если `public/` ещё не лежит на хосте, положите ассеты в `./public`
+(в образ они не копируются, так как заигнорены в git).
+
+### Как это устроено
+
+- `DB_PATH=/data/musorbox.db`, каталог `./data` смонтирован в `/data`;
+  миграции применяются на старте автоматически.
+- `./public` смонтирован в `/app/public` (чтение/запись — редактор пишет
+  `public/uploads/`).
+- `TUNNEL_TOKEN` → `cloudflared tunnel run --token ...` внутри контейнера,
+  процесс супервизируется `docker/entrypoint.sh`.
+- `PORT` на хосте открыт только для локальной отладки — туннелю он не нужен.
+
+### Как получить токен туннеля
+
+Cloudflare Zero Trust → Networks → Tunnels → создать/выбрать туннель →
+Configure → «docker run cloudflare/cloudflared … --token <TOKEN>».
+Соответствующему публичному hostname укажите service `http://app:3000`.
+
+### Переменные окружения
+
+| Переменная                  | По умолчанию        | Описание                                  |
+| --------------------------- | ------------------- | ----------------------------------------- |
+| `TUNNEL_TOKEN`              | (пусто)             | Токен Cloudflare Tunnel                   |
+| `PUBLIC_BASE_URL`           | (пусто)             | Внешний URL портала, напр. `https://...`  |
+| `SESSION_SECRET`            | (обязательность)    | Секрет сессий                             |
+| `AP_ALLOW_INSECURE_HOSTS`   | loopback            | Разрешённые plain-http хосты для федереции |
+| `AP_DEBUG`                  | `0`                 | Подробный лог входящих ActivityPub        |
+| `APP_PORT`                  | `3000`              | Порт на хосте (для отладки)               |
+
+`SESSION_SECRET` можно сгенерировать командой `openssl rand -hex 32`.
+
 ## Примечание об ассетах
 
 CSS, JS, изображения и аватары из дампов оригинального сайта в репозиторий

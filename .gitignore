@@ -27,6 +27,9 @@ dumps
 # ap:wipe delivery state
 ap_wipe_state.json
 
+# Docker compose bind mount for the DB (outside the container)
+data/
+
 # Logs
 logs/
 *.log
