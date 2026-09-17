@@ -12,6 +12,15 @@ export const config = {
   contactEmail: "hello@musorbox.example",
   baseUrl: (process.env.PUBLIC_BASE_URL ?? `http://localhost:${Number(process.env.PORT ?? 3000)}`).replace(/\/+$/, ""),
   /**
+   * Usernames (lowercased) that are forced to the "admin" role. On startup their
+   * role in the DB is set to "admin"; existing DB role/ban state for others is untouched.
+   * Comma-separated list.
+   */
+  adminUsernames: (process.env.ADMIN_USERNAME ?? "")
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean),
+  /**
    * Hostnames (lowercased) that may be fetched over plain http for remote actors.
    * Defaults to the loopback hosts so local dev federation works out of the box.
    * Set `AP_ALLOW_INSECURE_HOSTS` to override; an explicitly-set empty string

@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { logger } from "hono/logger";
-import { getDb } from "./core/db";
+import { getDb, getDrizzle } from "./core/db";
+import { inArray, sql } from "drizzle-orm";
+import { users } from "./core/schema";
 import { config } from "./core/config";
 import { sessionMiddleware } from "./core/middleware";
 import type { UserContext } from "./core/middleware";
@@ -51,6 +53,18 @@ app.all("*", (c) => c.text("Not found", 404));
 
 getDb();
 console.log(`[musorbox] DB initialized at ${config.dbPath}`);
+
+if (config.adminUsernames.length > 0) {
+  const promoted = getDrizzle()
+    .update(users)
+    .set({ role: "admin" })
+    .where(inArray(sql`lower(${users.username})`, config.adminUsernames))
+    .returning({ id: users.id })
+    .all();
+  if (promoted.length > 0) {
+    console.log(`[musorbox] forced admin: ${promoted.length} user(s) promoted to admin (ADMIN_USERNAME)`);
+  }
+}
 
 Bun.serve({
   port: config.port,
