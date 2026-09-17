@@ -15,6 +15,8 @@ import pagesRoutes from "./pages/routes";
 import activityPubRoutes from "./activitypub/routes";
 import notificationsRoutes from "./notifications/routes";
 import moderationRoutes from "./moderation/routes";
+import apiRoutes from "./api/routes";
+import apiSettingsRoutes from "./api/settings";
 
 type AppEnv = {
   Variables: UserContext;
@@ -33,6 +35,8 @@ app.use("/Bredacture/*", serveStatic({ root: "./public" }));
 app.use("/uploads/*", serveStatic({ root: "./public" }));
 
 app.route("/", activityPubRoutes);
+app.route("/", apiRoutes);
+app.route("/", apiSettingsRoutes);
 app.route("/", topicsRoutes);
 app.route("/", authRoutes);
 app.route("/", forumRoutes);

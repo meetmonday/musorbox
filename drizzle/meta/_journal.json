@@ -71,6 +71,13 @@
       "when": 1789650737845,
       "tag": "0009_thick_black_tom",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789671193135,
+      "tag": "0010_luxuriant_ozymandias",
+      "breakpoints": true
     }
   ]
 }

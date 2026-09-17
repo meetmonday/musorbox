@@ -42,6 +42,17 @@ export const sessions = sqliteTable(
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
 
+export const apiTokens = sqliteTable(
+  "api_tokens",
+  {
+    userId: integer("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+  },
+  (t) => [uniqueIndex("api_tokens_hash_idx").on(t.tokenHash)],
+);
+
 export const categories = sqliteTable(
   "categories",
   {
