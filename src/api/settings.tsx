@@ -36,10 +36,10 @@ app.use("/settings/api", async (c, next) => {
     const referer = c.req.header("Referer");
     let sameOrigin = false;
     try {
-      const requestOrigin = new URL(c.req.url).origin;
+      const publicOrigin = new URL(config.baseUrl).origin;
       sameOrigin = origin !== undefined
-        ? origin === requestOrigin
-        : referer !== undefined && new URL(referer).origin === requestOrigin;
+        ? origin === publicOrigin
+        : referer !== undefined && new URL(referer).origin === publicOrigin;
     } catch {
       sameOrigin = false;
     }
