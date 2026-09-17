@@ -64,6 +64,13 @@
       "when": 1789583065959,
       "tag": "0008_harsh_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789650737845,
+      "tag": "0009_thick_black_tom",
+      "breakpoints": true
     }
   ]
 }

@@ -11,6 +11,9 @@ export const users = sqliteTable(
       .notNull()
       .default("user"),
     avatarUrl: text("avatar_url"),
+    banned: integer("banned", { mode: "boolean" }).notNull().default(false),
+    banReason: text("ban_reason"),
+    bannedAt: integer("banned_at", { mode: "timestamp_ms" }),
     country: text("country"),
     city: text("city"),
     vkUrl: text("vk_url"),
@@ -72,6 +75,7 @@ export const topics = sqliteTable(
     votesDown: integer("votes_down").notNull().default(0),
     commentCount: integer("comment_count").notNull().default(0),
     isPinned: integer("is_pinned", { mode: "boolean" }).notNull().default(false),
+    hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
     views: integer("views").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
@@ -124,6 +128,8 @@ export const comments = sqliteTable(
     remoteActorId: integer("remote_actor_id").references(() => apActors.id, { onDelete: "cascade" }),
     body: text("body").notNull(),
     apUrl: text("ap_url"),
+    hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
+    editedAt: integer("edited_at", { mode: "timestamp_ms" }),
     votesUp: integer("votes_up").notNull().default(0),
     votesDown: integer("votes_down").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
@@ -153,6 +159,33 @@ export const votes = sqliteTable(
     index("votes_entity_idx").on(t.entityType, t.entityId),
   ],
 );
+
+export const notifications = sqliteTable("notifications", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  actorId: integer("actor_id").references(() => users.id, { onDelete: "set null" }),
+  remoteActorId: integer("remote_actor_id").references(() => apActors.id, { onDelete: "set null" }),
+  type: text("type", { enum: ["reply", "topic_reply", "mention", "like", "mod"] }).notNull(),
+  topicId: integer("topic_id").references(() => topics.id, { onDelete: "cascade" }),
+  commentId: integer("comment_id").references(() => comments.id, { onDelete: "cascade" }),
+  message: text("message"),
+  eventKey: text("event_key").notNull(),
+  read: integer("read", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+}, (t) => [
+  index("notifications_user_read_idx").on(t.userId, t.read),
+  uniqueIndex("notifications_event_idx").on(t.userId, t.eventKey),
+]);
+
+export const modLog = sqliteTable("mod_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  moderatorId: integer("moderator_id").references(() => users.id, { onDelete: "set null" }),
+  action: text("action").notNull(),
+  entityType: text("entity_type", { enum: ["topic", "comment", "user"] }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  reason: text("reason").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+}, (t) => [index("mod_log_created_idx").on(t.createdAt)]);
 
 export const firms = sqliteTable(
   "firms",

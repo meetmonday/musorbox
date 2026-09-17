@@ -1,6 +1,7 @@
 import { getDrizzle } from "../core/db";
 import { comments, topics, users, apActors } from "../core/schema";
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { notifyComment } from "../notifications/service";
 import { notifyCommentCreated, notifyCommentDeleted } from "../activitypub/notify";
 import { stripLeadingReplyMentions } from "../core/utils";
 
@@ -12,6 +13,7 @@ export type TopicComment = {
   votesUp: number;
   votesDown: number;
   createdAt: Date;
+  hidden: boolean;
   authorId: number | null;
   remoteActorId: number | null;
   isRemoteAuthor: boolean;
@@ -31,6 +33,7 @@ const commentSelect = {
   votesUp: comments.votesUp,
   votesDown: comments.votesDown,
   createdAt: comments.createdAt,
+  hidden: comments.hidden,
   authorId: comments.authorId,
   remoteActorId: comments.remoteActorId,
   localUsername: users.username,
@@ -52,6 +55,7 @@ type CommentRow = {
   votesUp: number;
   votesDown: number;
   createdAt: Date;
+  hidden: boolean;
   authorId: number | null;
   remoteActorId: number | null;
   localUsername: string | null;
@@ -81,6 +85,7 @@ function toTopicComment(r: CommentRow): TopicComment {
       votesUp: r.votesUp as number,
       votesDown: r.votesDown as number,
       createdAt: r.createdAt as Date,
+      hidden: Boolean(r.hidden),
       authorId: null,
       remoteActorId: remoteId,
       isRemoteAuthor: true,
@@ -101,6 +106,7 @@ function toTopicComment(r: CommentRow): TopicComment {
     votesUp: r.votesUp as number,
     votesDown: r.votesDown as number,
     createdAt: r.createdAt as Date,
+    hidden: Boolean(r.hidden),
     authorId: (r.authorId as number | null) ?? null,
     remoteActorId: null,
     isRemoteAuthor: false,
@@ -118,14 +124,17 @@ function cleanRemoteBody(c: TopicComment): TopicComment {
   return c.isRemoteAuthor ? { ...c, body: stripLeadingReplyMentions(c.body) } : c;
 }
 
-export async function getComments(topicId: number): Promise<TopicComment[]> {
+export async function getComments(topicId: number, includeHidden: boolean = false): Promise<TopicComment[]> {
   const db = getDrizzle();
+  const where = includeHidden
+    ? eq(comments.topicId, topicId)
+    : and(eq(comments.topicId, topicId), eq(comments.hidden, false));
   const rows = await db
     .select(commentSelect)
     .from(comments)
     .leftJoin(users, eq(users.id, comments.authorId))
     .leftJoin(apActors, eq(apActors.id, comments.remoteActorId))
-    .where(eq(comments.topicId, topicId))
+    .where(where)
     .orderBy(asc(comments.createdAt));
   return rows.map((r) => cleanRemoteBody(toTopicComment(r)));
 }
@@ -183,7 +192,8 @@ export async function addComment(opts: {
     })
     .where(eq(topics.id, opts.topicId));
   const id = ids[0]?.id ?? 0;
-  if (id && !opts.apUrl) void notifyCommentCreated(id, authorId!);
+  if (id) await notifyComment(id);
+  if (id && !opts.apUrl) void notifyCommentCreated(id, authorId!).catch(() => console.error("Не удалось отправить комментарий в федерацию"));
   return id;
 }
 
@@ -194,6 +204,16 @@ export async function getCommentChildrenCount(commentId: number): Promise<number
     .from(comments)
     .where(eq(comments.parentId, commentId));
   return rows.length;
+}
+
+export async function updateComment(commentId: number, body: string): Promise<boolean> {
+  const db = getDrizzle();
+  const rows = await db
+    .update(comments)
+    .set({ body, editedAt: new Date() })
+    .where(and(eq(comments.id, commentId), isNull(comments.remoteActorId)))
+    .returning({ id: comments.id });
+  return rows.length > 0;
 }
 
 export async function deleteComment(commentId: number, topicId: number): Promise<void> {

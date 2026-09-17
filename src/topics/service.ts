@@ -2,7 +2,7 @@ import { getDrizzle } from "../core/db";
 import { topics, categories, users, tags, topicTags, comments, apActors } from "../core/schema";
 import { and, desc, eq, sql, count } from "drizzle-orm";
 import { config } from "../core/config";
-import { notifyTopicCreated, notifyTopicDeleted } from "../activitypub/notify";
+import { notifyTopicCreated, notifyTopicDeleted, notifyTopicUpdated } from "../activitypub/notify";
 
 export type TopicListItem = {
   id: number;
@@ -26,6 +26,7 @@ export type TopicListItem = {
 export type TopicDetail = TopicListItem & {
   categoryType: string;
   isPinned: boolean;
+  hidden: boolean;
   views: number;
   updatedAt?: Date | null;
 };
@@ -41,6 +42,7 @@ type TopicRow = {
   topics_comment_count: number;
   topics_created_at: Date;
   topics_is_pinned: boolean;
+  topics_hidden: boolean;
   topics_views: number;
   category_id: number;
   category_slug: string;
@@ -78,6 +80,7 @@ export function mapTopicDetail(r: Omit<TopicRow, "tags">): TopicDetail {
     ...mapTopicRow(r),
     categoryType: r.category_type,
     isPinned: r.topics_is_pinned,
+    hidden: r.topics_hidden,
     views: r.topics_views,
   };
 }
@@ -93,6 +96,7 @@ export const topicSelect = {
   topics_comment_count: topics.commentCount,
   topics_created_at: topics.createdAt,
   topics_is_pinned: topics.isPinned,
+  topics_hidden: topics.hidden,
   topics_views: topics.views,
   category_id: categories.id,
   category_slug: categories.slug,
@@ -116,7 +120,7 @@ export async function getTopicsByCategory(
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
     .innerJoin(users, eq(users.id, topics.authorId))
-    .where(categorySlug ? eq(categories.slug, categorySlug) : sql`1=1`)
+    .where(sql`(${categorySlug ? eq(categories.slug, categorySlug) : sql`1=1`}) AND ${topics.hidden} = 0`)
     .orderBy(desc(topics.createdAt))
     .$dynamic();
 
@@ -124,7 +128,7 @@ export async function getTopicsByCategory(
     .select({ n: count(topics.id) })
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
-    .where(categorySlug ? eq(categories.slug, categorySlug) : sql`1=1`);
+    .where(sql`(${categorySlug ? eq(categories.slug, categorySlug) : sql`1=1`}) AND ${topics.hidden} = 0`);
 
   const [rows, totalRows] = await Promise.all([
     base.limit(limit).offset((pageNum - 1) * limit),
@@ -172,6 +176,7 @@ export async function getFeaturedTopics(limit: number = 5): Promise<TopicListIte
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
     .innerJoin(users, eq(users.id, topics.authorId))
+    .where(eq(topics.hidden, false))
     .orderBy(desc(topics.commentCount))
     .limit(limit);
   const items = rows.map(mapTopicRow);
@@ -186,6 +191,7 @@ export async function getRecentTopics(limit: number = 8): Promise<SidebarTopic[]
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
     .innerJoin(users, eq(users.id, topics.authorId))
+    .where(eq(topics.hidden, false))
     .orderBy(desc(topics.createdAt))
     .limit(limit);
   const items = rows.map(mapTopicRow);
@@ -330,7 +336,7 @@ export async function getHotTopics(limit: number = 8): Promise<SidebarTopic[]> {
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
     .innerJoin(users, eq(users.id, topics.authorId))
-    .where(sql`${topics.commentCount} > 0`)
+    .where(sql`${topics.commentCount} > 0 AND ${topics.hidden} = 0`)
     .orderBy(desc(topics.commentCount), desc(topics.votesUp))
     .limit(limit);
   const items = rows.map(mapTopicRow);
@@ -343,6 +349,8 @@ export async function getRecentDiscussions(limit: number = 8): Promise<SidebarTo
   const latestIds = await db
     .select({ topicId: comments.topicId })
     .from(comments)
+    .innerJoin(topics, eq(topics.id, comments.topicId))
+    .where(eq(topics.hidden, false))
     .groupBy(comments.topicId)
     .orderBy(desc(sql`max(${comments.id})`))
     .limit(limit);
@@ -354,7 +362,7 @@ export async function getRecentDiscussions(limit: number = 8): Promise<SidebarTo
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
     .innerJoin(users, eq(users.id, topics.authorId))
-    .where(sql`${topics.id} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+    .where(sql`${topics.id} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)}) AND ${topics.hidden} = 0`);
   const byId = new Map(rows.map((r) => [r.topics_id, r] as const));
   const ordered: Omit<TopicRow, "tags">[] = [];
   for (const id of ids) {
@@ -525,4 +533,32 @@ export async function deleteTopic(id: number): Promise<void> {
     const url = topic[0].slug ? `${config.baseUrl}/topics/${id}/${topic[0].slug}` : `${config.baseUrl}/topics/${id}`;
     void notifyTopicDeleted(id, topic[0].authorId, url);
   }
+}
+
+export async function updateTopic(
+  id: number,
+  input: {
+    title: string;
+    body: string;
+    categoryId: number;
+    leadImage: string | null;
+    tagIds: number[];
+  },
+): Promise<void> {
+  const db = getDrizzle();
+  await db
+    .update(topics)
+    .set({
+      title: input.title,
+      body: input.body,
+      categoryId: input.categoryId,
+      leadImage: input.leadImage,
+      updatedAt: new Date(),
+    })
+    .where(eq(topics.id, id));
+  await db.delete(topicTags).where(eq(topicTags.topicId, id));
+  if (input.tagIds.length) {
+    await db.insert(topicTags).values(input.tagIds.map((tagId) => ({ topicId: id, tagId })));
+  }
+  void notifyTopicUpdated(id);
 }

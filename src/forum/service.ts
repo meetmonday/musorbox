@@ -43,6 +43,7 @@ export async function getForumThreads(
     topics_comment_count: topics.commentCount,
     topics_created_at: topics.createdAt,
     topics_is_pinned: topics.isPinned,
+    topics_hidden: topics.hidden,
     topics_views: topics.views,
     category_id: categories.id,
     category_slug: categories.slug,
@@ -58,7 +59,7 @@ export async function getForumThreads(
     .from(topics)
     .innerJoin(categories, eq(categories.id, topics.categoryId))
     .innerJoin(users, eq(users.id, topics.authorId))
-    .where(eq(categories.slug, forumSlug))
+    .where(and(eq(categories.slug, forumSlug), eq(topics.hidden, false)))
     .orderBy(desc(topics.createdAt))
     .$dynamic();
 
@@ -71,10 +72,10 @@ export async function getForumThreads(
       const tag = await getTagBySlug(tagSlug);
       if (!tag) return 0;
       countQuery.leftJoin(topicTags, eq(topicTags.topicId, topics.id)).where(
-        and(eq(categories.slug, forumSlug), eq(topicTags.tagId, tag.id)),
+        and(eq(categories.slug, forumSlug), eq(topicTags.tagId, tag.id), eq(topics.hidden, false)),
       );
     } else {
-      countQuery.where(eq(categories.slug, forumSlug));
+      countQuery.where(and(eq(categories.slug, forumSlug), eq(topics.hidden, false)));
     }
     const r = await countQuery;
     return r[0]?.n ?? 0;
@@ -85,7 +86,7 @@ export async function getForumThreads(
     if (!tag) return { items: [], total: 0 };
     base
       .leftJoin(topicTags, eq(topicTags.topicId, topics.id))
-      .where(and(eq(categories.slug, forumSlug), eq(topicTags.tagId, tag.id)));
+      .where(and(eq(categories.slug, forumSlug), eq(topicTags.tagId, tag.id), eq(topics.hidden, false)));
   }
 
   const [rows, total] = await Promise.all([

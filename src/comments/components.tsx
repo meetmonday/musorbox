@@ -2,7 +2,7 @@ import type { FC } from "hono/jsx";
 import type { TopicComment } from "./service";
 import { formatDate } from "../core/utils";
 
-const CommentTop: FC<{ comment: TopicComment; showDelete?: boolean }> = ({ comment, showDelete }) => {
+const CommentTop: FC<{ comment: TopicComment; showDelete?: boolean; showEdit?: boolean; showHide?: boolean }> = ({ comment, showDelete, showEdit, showHide }) => {
   const score = comment.votesUp - comment.votesDown;
   return (
     <>
@@ -52,6 +52,33 @@ const CommentTop: FC<{ comment: TopicComment; showDelete?: boolean }> = ({ comme
         </a>
         <span class="dark">, {formatDate(comment.createdAt)}</span>{" "}
         <a href={`#div_comment_${comment.id}`}>#</a>
+        {showEdit ? (
+          <a
+            href="#"
+            title="Изменить комментарий"
+            onclick={`show_edit_comment_form(${comment.id}); return false;`}
+            style="margin-left:6px;color:#1FB6F2;text-decoration:none"
+          >
+            ✎
+          </a>
+        ) : null}
+        {showHide ? (
+          <form
+            method="post"
+            action={`/moderation/comments/${comment.id}/${comment.hidden ? "show" : "hide"}/`}
+            style="display:inline"
+            onsubmit="var r = prompt('Причина:'); if (r === null) return false; this.reason.value = r;"
+          >
+            <input type="hidden" name="reason" />
+            <button
+              type="submit"
+              title={comment.hidden ? "Показать комментарий" : "Скрыть комментарий"}
+              style="background:none;border:0;padding:0;margin-left:6px;color:#999;cursor:pointer;font-size:1em"
+            >
+              {comment.hidden ? "◉" : "◌"}
+            </button>
+          </form>
+        ) : null}
         {showDelete ? (
           <form
             method="post"
@@ -85,12 +112,15 @@ const CommentNode: FC<{
   childrenComments: TopicComment[];
   childrenMap: Map<number, TopicComment[]>;
   canDelete: boolean;
+  canModerate?: boolean;
   currentUserId: number | null;
-}> = ({ comment, childrenComments, childrenMap, canDelete, currentUserId }) => {
-  const canDeleteThis = canDelete || comment.authorId === currentUserId;
+}> = ({ comment, childrenComments, childrenMap, canDelete, canModerate = false, currentUserId }) => {
+  const isOwn = comment.authorId !== null && comment.authorId === currentUserId;
+  const canDeleteThis = canDelete || isOwn;
+  const canEditThis = isOwn;
   return (
     <div id={`div_comment_${comment.id}`} class="div_comment">
-      <CommentTop comment={comment} showDelete={canDeleteThis && childrenComments.length === 0} />
+      <CommentTop comment={comment} showDelete={canDeleteThis && childrenComments.length === 0} showEdit={canEditThis} showHide={canModerate} />
       <div class="div_content_comm" id={`div_content_comm_${comment.id}`}>
         <div class="div_text" dangerouslySetInnerHTML={{ __html: comment.body }} />
         <ReplyLink commentId={comment.id} />
@@ -101,6 +131,7 @@ const CommentNode: FC<{
             childrenComments={childrenMap.get(c.id) ?? []}
             childrenMap={childrenMap}
             canDelete={canDelete}
+            canModerate={canModerate}
             currentUserId={currentUserId}
           />
         ))}
@@ -112,12 +143,14 @@ const CommentNode: FC<{
 export const CommentFragment: FC<{
   comment: TopicComment;
   canDelete?: boolean;
+  canModerate?: boolean;
   currentUserId?: number | null;
-}> = ({ comment, canDelete = false, currentUserId = null }) => {
+}> = ({ comment, canDelete = false, canModerate = false, currentUserId = null }) => {
   const canDeleteThis = canDelete || comment.authorId === currentUserId;
+  const canEditThis = comment.authorId !== null && comment.authorId === currentUserId;
   return (
     <div id={`div_comment_${comment.id}`} class="div_comment">
-      <CommentTop comment={comment} showDelete={canDeleteThis} />
+      <CommentTop comment={comment} showDelete={canDeleteThis} showEdit={canEditThis} showHide={canModerate} />
       <div class="div_content_comm" id={`div_content_comm_${comment.id}`}>
         <div class="div_text" dangerouslySetInnerHTML={{ __html: comment.body }} />
         <ReplyLink commentId={comment.id} />
@@ -129,18 +162,20 @@ export const CommentFragment: FC<{
 export const CommentList: FC<{
   comments: TopicComment[];
   canDelete?: boolean;
+  canModerate?: boolean;
   currentUserId?: number | null;
-}> = ({ comments, canDelete = false, currentUserId = null }) => {
+}> = ({ comments, canDelete = false, canModerate = false, currentUserId = null }) => {
+  const commentIds = new Set(comments.map((c) => c.id));
   const childrenMap = new Map<number, TopicComment[]>();
   for (const c of comments) {
     const key = c.parentId;
-    if (key !== null) {
+    if (key !== null && commentIds.has(key)) {
       const list = childrenMap.get(key) ?? [];
       list.push(c);
       childrenMap.set(key, list);
     }
   }
-  const roots = comments.filter((c) => c.parentId === null);
+  const roots = comments.filter((c) => c.parentId === null || !commentIds.has(c.parentId));
   const sortedRoots = roots.sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
   );
@@ -159,6 +194,7 @@ export const CommentList: FC<{
           childrenComments={childrenMap.get(c.id) ?? []}
           childrenMap={childrenMap}
           canDelete={canDelete}
+          canModerate={canModerate}
           currentUserId={currentUserId}
         />
       ))}

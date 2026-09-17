@@ -1,9 +1,12 @@
 import { getDrizzle } from "../core/db";
-import { users, topics, comments, categories } from "../core/schema";
-import { eq, sql, desc, count } from "drizzle-orm";
+import { users, topics, comments, categories, firms, sessions } from "../core/schema";
+import { and, eq, sql, desc, count } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { notifyProfileUpdated } from "../activitypub/notify";
 import type { TopicListItem } from "../topics/service";
 import { mapTopicRow, attachTags, topicSelect } from "../topics/service";
+import { changePassword } from "../auth/service";
 
 export type UserProfile = {
   id: number;
@@ -36,17 +39,18 @@ export async function getUserByUsername(username: string): Promise<UserProfile |
     db
       .select({ n: count(topics.id) })
       .from(topics)
-      .where(eq(topics.authorId, row.id))
+      .where(and(eq(topics.authorId, row.id), eq(topics.hidden, false)))
       .then((r) => r[0]?.n ?? 0),
     db
       .select({ n: sql<number>`count(distinct ${comments.topicId})` })
       .from(comments)
-      .where(eq(comments.authorId, row.id))
+      .innerJoin(topics, eq(topics.id, comments.topicId))
+      .where(and(eq(comments.authorId, row.id), eq(comments.hidden, false), eq(topics.hidden, false)))
       .then((r) => r[0]?.n ?? 0),
     db
       .select({ n: count(comments.id) })
       .from(comments)
-      .where(eq(comments.authorId, row.id))
+      .where(and(eq(comments.authorId, row.id), eq(comments.hidden, false)))
       .then((r) => r[0]?.n ?? 0),
   ]);
 
@@ -229,14 +233,14 @@ export async function getTopicsByAuthor(
       .from(topics)
       .innerJoin(users, eq(users.id, topics.authorId))
       .innerJoin(categories, eq(categories.id, topics.categoryId))
-      .where(eq(topics.authorId, user.id))
+      .where(and(eq(topics.authorId, user.id), eq(topics.hidden, false)))
       .orderBy(desc(topics.createdAt))
       .limit(limit)
       .offset((pageNum - 1) * limit),
     db
       .select({ n: count(topics.id) })
       .from(topics)
-      .where(eq(topics.authorId, user.id)),
+      .where(and(eq(topics.authorId, user.id), eq(topics.hidden, false))),
   ]);
 
   const items = rows.map(mapTopicRow);
@@ -273,4 +277,79 @@ export async function updateUserProfile(
     .where(eq(users.id, user.id));
   void notifyProfileUpdated(user.id);
   return true;
+}
+
+export async function listFirms(): Promise<{ id: number; name: string }[]> {
+  const db = getDrizzle();
+  return db.select({ id: firms.id, name: firms.name }).from(firms).orderBy(firms.name);
+}
+
+export async function getSettingsState(userId: number): Promise<SettingsState | null> {
+  const db = getDrizzle();
+  const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
+  if (!row) return null;
+  return {
+    ratingOptout: row.ratingOptout,
+    deviceFirmId: await getDeviceFirmId(row.id),
+    avatarUrl: row.avatarUrl,
+  };
+}
+
+async function getDeviceFirmId(userId: number): Promise<number | null> {
+  const db = getDrizzle();
+  const token = await db.query.users.findFirst({ where: eq(users.id, userId) });
+  void token;
+  return null;
+}
+
+export type SettingsState = {
+  ratingOptout: boolean;
+  deviceFirmId: number | null;
+  avatarUrl: string | null;
+};
+
+export type SaveSettingsResult =
+  | { ok: true }
+  | { ok: false; error: string; field?: string };
+
+export async function saveSettings(
+  userId: number,
+  data: { ratingOptout: boolean; deviceFirmId: number | null },
+): Promise<SaveSettingsResult> {
+  const db = getDrizzle();
+  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+  if (!user) return { ok: false, error: "Пользователь не найден." };
+  if (data.deviceFirmId !== null) {
+    const firm = await db.query.firms.findFirst({ where: eq(firms.id, data.deviceFirmId) });
+    if (!firm) return { ok: false, error: "Указан неизвестный производитель устройства.", field: "device_firm" };
+  }
+  await db
+    .update(users)
+    .set({ ratingOptout: data.ratingOptout, devices: null })
+    .where(eq(users.id, userId));
+  return { ok: true };
+}
+
+export async function saveAvatar(userId: number, filename: string): Promise<void> {
+  const db = getDrizzle();
+  await db.update(users).set({ avatarUrl: `/avatars/${filename}` }).where(eq(users.id, userId));
+}
+
+export async function deleteSessionsFor(userId: number): Promise<number> {
+  const db = getDrizzle();
+  const deleted = await db
+    .delete(sessions)
+    .where(eq(sessions.userId, userId))
+    .returning({ token: sessions.token });
+  return deleted.length;
+}
+
+export async function changePasswordAndDropSessions(
+  userId: number,
+  currentPassword: string,
+  newPassword: string,
+): Promise<SaveSettingsResult> {
+  const result = await changePassword(userId, currentPassword, newPassword);
+  if (!result.ok) return { ok: false, error: result.error, field: "current_password" };
+  return { ok: true };
 }

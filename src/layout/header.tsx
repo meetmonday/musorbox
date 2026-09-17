@@ -6,6 +6,7 @@ export type LayoutUser = {
   username: string;
   role: string;
   avatarUrl: string | null;
+  unreadCount?: number;
 } | null;
 
 export const LogoHeader: FC = () => (
@@ -188,7 +189,7 @@ export const Header: FC<{ user: LayoutUser }> = ({ user }) => (
                         onclick="window.scrollBy(0, window.innerHeight - 45); return false;"
                       />
                     </div>
-                    <div class="div_cell adh1">
+                    <div class="div_cell adh1" style="white-space:nowrap">
                       {user ? (
                         <a href={`/users/${user.username}/`} class="a_userbar_button" title="Профиль">
                           <img
@@ -208,6 +209,27 @@ export const Header: FC<{ user: LayoutUser }> = ({ user }) => (
                         </noindex>
                       )}
                     </div>
+                    {user ? (
+                      <div class="div_cell adh1" style="width:1%;white-space:nowrap">
+                        <a
+                          href="/notifications"
+                          title="Уведомления"
+                          style="position:relative;display:inline-block;vertical-align:middle;width:26px;height:26px;line-height:26px;text-align:center;background:#f0f0f0;border:1px solid #c9c9c9;font-size:15px;text-decoration:none;color:#555"
+                        >
+                          ✉
+                          {user.unreadCount ? (
+                            <span style="position:absolute;top:-7px;right:-7px;background:#ff4d4d;color:#fff;font-size:10px;line-height:14px;min-width:14px;text-align:center;border-radius:7px;padding:0 3px">
+                              {user.unreadCount > 99 ? "99+" : user.unreadCount}
+                            </span>
+                          ) : null}
+                        </a>
+                      </div>
+                    ) : null}
+                    {user && (user.role === "editor" || user.role === "admin") ? (
+                      <div class="div_cell" style="padding:0 8px;white-space:nowrap">
+                        <a href="/moderation" class="underline">Модерация</a>
+                      </div>
+                    ) : null}
                     <div class="div_cell adh0 adhs1" id="div_profile_button">
                       <a
                         href={user ? `/users/${user.username}/` : "/login"}

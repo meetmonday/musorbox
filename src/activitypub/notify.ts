@@ -1,4 +1,4 @@
-import { topicNoteById, commentNoteById, getUserRowById, getKeyPairForUser, buildActorForUser, resolveLocalObject, resolveRemoteAcct, fetchRemoteActor, type LocalObjectRef } from "./service";
+import { topicNoteById, commentNoteById, getUserRowById, getUserRowByUsername, getKeyPairForUser, buildActorForUser, resolveLocalObject, resolveRemoteAcct, fetchRemoteActor, type LocalObjectRef } from "./service";
 import { deliverToUserFollowers, sendActivityToInbox } from "./deliver";
 import { createActivity, deleteActivity, updateActivity, mentionTag } from "./jsonld";
 import { config } from "../core/config";
@@ -168,6 +168,16 @@ async function replyTargetIri(ref: { kind: "topic" | "comment"; topicId: number;
   }
   if (parent[0].authorId != null) return actorUrlForUserId(parent[0].authorId);
   return null;
+}
+
+export async function notifyTopicUpdated(topicId: number): Promise<void> {
+  const note = await topicNoteById(topicId);
+  if (!note) return;
+  const authorId = typeof note.attributedTo === "string"
+    ? (await getUserRowByUsername(note.attributedTo.replace(/\/+$/, "").split("/").pop() ?? ""))?.id
+    : undefined;
+  if (!authorId) return;
+  deliverToUserFollowers(updateActivity(note), authorId);
 }
 
 export async function notifyTopicDeleted(topicId: number, authorUserId: number, objectUrl?: string): Promise<void> {

@@ -1,16 +1,24 @@
 import { createMiddleware } from "hono/factory";
 import { getCookie } from "hono/cookie";
 import { getDrizzle } from "./db";
-import { sessions, users } from "./schema";
-import { eq } from "drizzle-orm";
+import { sessions, users, notifications } from "./schema";
+import { and, count, eq } from "drizzle-orm";
+
+export function isStaff(user: { role: string; banned?: boolean } | null | undefined): boolean {
+  return !user?.banned && (user?.role === "editor" || user?.role === "admin");
+}
+
+export type SessionUser = {
+  id: number;
+  username: string;
+  role: string;
+  avatarUrl: string | null;
+  banned: boolean;
+  unreadCount: number;
+};
 
 export type UserContext = {
-  user?: {
-    id: number;
-    username: string;
-    role: string;
-    avatarUrl: string | null;
-  };
+  user?: SessionUser;
 };
 
 export const sessionMiddleware = createMiddleware<{ Variables: UserContext }>(async (c, next) => {
@@ -24,12 +32,16 @@ export const sessionMiddleware = createMiddleware<{ Variables: UserContext }>(as
       const user = await db.query.users.findFirst({
         where: eq(users.id, session.userId),
       });
-      if (user) {
+      if (user && !user.banned) {
+        const unread = await db.select({ n: count() }).from(notifications)
+          .where(and(eq(notifications.userId, user.id), eq(notifications.read, false)));
         c.set("user", {
           id: user.id,
           username: user.username,
           role: user.role,
           avatarUrl: user.avatarUrl,
+          banned: user.banned,
+          unreadCount: unread[0]?.n ?? 0,
         });
       }
     }

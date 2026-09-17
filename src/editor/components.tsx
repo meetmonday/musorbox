@@ -38,6 +38,8 @@ export type NewTopicFormProps = {
   tagIds?: number[];
   body?: string;
   error?: string;
+  action?: string;
+  editing?: boolean;
 };
 
 export const NewTopicForm: FC<NewTopicFormProps> = ({
@@ -49,17 +51,19 @@ export const NewTopicForm: FC<NewTopicFormProps> = ({
   tagIds = [],
   body = "",
   error,
+  action = "/new_topic/",
+  editing = false,
 }) => {
   const checked = new Set(tagIds);
   const initJS = `Bredacture_('${EDITOR_ID}', ${JSON.stringify(body)}, ${EDITOR_OPTIONS}, 'auto');`
     + `document.getElementById('frm_new_topic').onsubmit=function(){e_['${EDITOR_ID}'].fix_value();return true};`;
   return (
     <div>
-      <h1 class="h_page_header">Новый топик</h1>
+      <h1 class="h_page_header">{editing ? "Редактирование топика" : "Новый топик"}</h1>
       {error ? (
         <div class="div_instruction" style="color:#c33">{error}</div>
       ) : null}
-      <form id="frm_new_topic" method="post" action="/new_topic/">
+      <form id="frm_new_topic" method="post" action={action}>
         <div class="div_new_topic">
           <div class="div_form_cell" style="width:100%">
             <h3>Заголовок</h3>
@@ -96,7 +100,7 @@ export const NewTopicForm: FC<NewTopicFormProps> = ({
           <div id={`div_editor_${EDITOR_ID}`} />
           <div style="margin-top:10px;clear:both">
             <button type="submit" class="blue" style="padding:5px 15px;border:0;cursor:pointer">
-              Добавить топик
+              {editing ? "Сохранить изменения" : "Добавить топик"}
             </button>
             <span class="dark">
               <span class="italic">или</span> <a href="/" class="a_dashed">отменить</a>

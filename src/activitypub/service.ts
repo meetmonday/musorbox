@@ -767,8 +767,12 @@ export async function removeReactionByActivityId(actorId: number, activityId: st
 export async function countUserPublished(userId: number): Promise<number> {
   const db = getDrizzle();
   const [t, c] = await Promise.all([
-    db.select({ n: count(topics.id) }).from(topics).where(eq(topics.authorId, userId)),
-    db.select({ n: count(comments.id) }).from(comments).where(eq(comments.authorId, userId)),
+    db.select({ n: count(topics.id) }).from(topics).where(and(eq(topics.authorId, userId), eq(topics.hidden, false))),
+    db
+      .select({ n: count(comments.id) })
+      .from(comments)
+      .innerJoin(topics, eq(topics.id, comments.topicId))
+      .where(and(eq(comments.authorId, userId), eq(comments.hidden, false), eq(topics.hidden, false))),
   ]);
   return (t[0]?.n ?? 0) + (c[0]?.n ?? 0);
 }
@@ -799,7 +803,7 @@ export async function listOutboxActivities(
     .innerJoin(commentAuthor, eq(commentAuthor.id, comments.authorId))
     .innerJoin(topics, eq(topics.id, comments.topicId))
     .innerJoin(topicAuthorUser, eq(topicAuthorUser.id, topics.authorId))
-    .where(eq(comments.authorId, userId))
+    .where(and(eq(comments.authorId, userId), eq(comments.hidden, false), eq(topics.hidden, false)))
     .orderBy(desc(comments.createdAt));
 
   const topicRows = await db
@@ -818,7 +822,7 @@ export async function listOutboxActivities(
     })
     .from(topics)
     .innerJoin(users, eq(users.id, topics.authorId))
-    .where(eq(topics.authorId, userId))
+    .where(and(eq(topics.authorId, userId), eq(topics.hidden, false)))
     .orderBy(desc(topics.createdAt));
 
   const topicAuthorByTopic = new Map<number, string>();
@@ -901,6 +905,7 @@ function commentToTopicComment(r: ApCommentRow): TopicComment {
     votesUp: 0,
     votesDown: 0,
     createdAt: r.createdAt,
+    hidden: false,
     authorId: null,
     remoteActorId: null,
     isRemoteAuthor: false,
@@ -931,7 +936,7 @@ export async function topicNoteById(id: number): Promise<Record<string, unknown>
     })
     .from(topics)
     .innerJoin(users, eq(users.id, topics.authorId))
-    .where(eq(topics.id, id))
+    .where(and(eq(topics.id, id), eq(topics.hidden, false)))
     .limit(1);
   if (!rows[0]) return null;
   return buildTopicNote(rowToDetail(rows[0]));
@@ -944,7 +949,7 @@ export async function commentTopicById(commentId: number): Promise<{ topicId: nu
     .select({ topicId: comments.topicId, topicSlug: topics.slug })
     .from(comments)
     .innerJoin(topics, eq(topics.id, comments.topicId))
-    .where(eq(comments.id, commentId))
+    .where(and(eq(comments.id, commentId), eq(comments.hidden, false), eq(topics.hidden, false)))
     .limit(1);
   return rows[0] ?? null;
 }
@@ -970,7 +975,7 @@ export async function commentNoteById(id: number): Promise<Record<string, unknow
     .leftJoin(users, eq(users.id, comments.authorId))
     .leftJoin(apActors, eq(apActors.id, comments.remoteActorId))
     .innerJoin(topics, eq(topics.id, comments.topicId))
-    .where(eq(comments.id, id))
+    .where(and(eq(comments.id, id), eq(comments.hidden, false), eq(topics.hidden, false)))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -988,6 +993,7 @@ export async function commentNoteById(id: number): Promise<Record<string, unknow
       votesUp: 0,
       votesDown: 0,
       createdAt: row.createdAt,
+      hidden: false,
       authorId: isRemote ? null : row.authorId ?? null,
       remoteActorId: row.remoteActorId ?? null,
       isRemoteAuthor: isRemote,
@@ -1034,7 +1040,7 @@ async function topicRowById(rowId: number): Promise<TopicDetail | null> {
     })
     .from(topics)
     .innerJoin(users, eq(users.id, topics.authorId))
-    .where(eq(topics.id, rowId))
+    .where(and(eq(topics.id, rowId), eq(topics.hidden, false)))
     .limit(1);
   if (!rows[0]) return null;
   return rowToDetail(rows[0]);
@@ -1085,6 +1091,7 @@ function rowToDetail(r: {
     tags: [],
     categoryType: "",
     isPinned: false,
+    hidden: false,
     views: 0,
     updatedAt: r.updatedAt,
   };

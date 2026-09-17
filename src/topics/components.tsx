@@ -354,14 +354,22 @@ export const TopicMini: FC<{ topic: TopicListItem; showAuthor?: boolean; arrow?:
   </div>
 );
 
-export const TopicDetailView: FC<{ topic: TopicDetail; canDelete?: boolean }> = ({
-  topic,
-  canDelete = false,
-}) => {
+export const TopicDetailView: FC<{
+  topic: TopicDetail;
+  canDelete?: boolean;
+  canEdit?: boolean;
+  canModerate?: boolean;
+  hiddenVisible?: boolean;
+}> = ({ topic, canDelete = false, canEdit = false, canModerate = false, hiddenVisible = false }) => {
   const isForum = topic.categoryType === "forum";
+  void isForum;
   return (
     <div class="div_topic" id={`div_topic_${topic.id}`}>
-      <table cellpadding="0" cellspacing="0">
+      {topic.hidden && hiddenVisible ? (
+        <div style="background:#ff4d4d;color:#fff;padding:5px 10px;margin-bottom:10px">
+          Топик скрыт модератором. Вы видите его как {canModerate ? "модератор" : "автор"}.
+        </div>
+      ) : null} <table cellpadding="0" cellspacing="0">
         <tr>
           <td class="td1">
             <a href={`/users/${topic.authorUsername}/`}>
@@ -417,17 +425,82 @@ export const TopicDetailView: FC<{ topic: TopicDetail; canDelete?: boolean }> = 
         </tr>
       </table>
       <div class="div_bookmarks" id={`div_bookmarks_${topic.id}`}> </div>
-      {canDelete ? (
-        <form
-          method="post"
-          action={`/topics/${topic.id}/delete/`}
-          style="margin-top:10px"
-          onsubmit="return confirm('Удалить топик?')"
-        >
-          <button type="submit" class="a_dashed" style="border:0;background:none;cursor:pointer">
-            Удалить топик
-          </button>
-        </form>
+      {(canEdit || canModerate || canDelete) && !topic.hidden ? (
+        <div style="background:#f5f5f5;border:1px solid #ddd;padding:6px 10px;margin-top:10px;font-size:1.1em">
+          {canEdit ? (
+            <a
+              href={`/topics/${topic.id}/${topic.slug}/edit/`}
+              style="display:inline-block;padding:3px 12px;background:#e8e8e8;border:1px solid #bbb;text-decoration:none;color:#333"
+            >
+              ✎ Изменить
+            </a>
+          ) : null}
+          {canDelete ? (
+            <form
+              method="post"
+              action={`/topics/${topic.id}/delete/`}
+              style="display:inline-block;margin-left:8px"
+              onsubmit="return confirm('Удалить топик?')"
+            >
+              <button
+                type="submit"
+                style="display:inline-block;padding:3px 12px;background:#e8e8e8;border:1px solid #bbb;cursor:pointer;color:#c33;font-family:inherit;font-size:inherit"
+              >
+                ✕ Удалить
+              </button>
+            </form>
+          ) : null}
+          {canModerate ? (
+            <form
+              method="post"
+              action={`/moderation/topics/${topic.id}/hide/`}
+              style="display:inline-block;margin-left:8px"
+              onsubmit="var r = prompt('Причина скрытия:'); if (r === null) return false; this.reason.value = r;"
+            >
+              <input type="hidden" name="reason" />
+              <button
+                type="submit"
+                style="display:inline-block;padding:3px 12px;background:#fdeef0;border:1px solid #d9a0a8;cursor:pointer;color:#a33;font-family:inherit;font-size:inherit"
+              >
+                ◌ Скрыть
+              </button>
+            </form>
+          ) : null}
+          {canModerate ? (
+            <form
+              method="post"
+              action={`/moderation/users/${topic.authorId}/ban/`}
+              style="display:inline-block;margin-left:8px"
+              onsubmit="var r = prompt('Причина блокировки:'); if (r === null || !r) return false; this.reason.value = r;"
+            >
+              <input type="hidden" name="reason" />
+              <button
+                type="submit"
+                style="display:inline-block;padding:3px 12px;background:#fdeef0;border:1px solid #d9a0a8;cursor:pointer;color:#a33;font-family:inherit;font-size:inherit"
+              >
+                ⛔ Бан автора
+              </button>
+            </form>
+          ) : null}
+        </div>
+      ) : null}
+      {canModerate && topic.hidden ? (
+        <div style="background:#fdeef0;border:1px solid #d9a0a8;padding:6px 10px;margin-top:10px">
+          <span style="color:#a33">Топик скрыт модератором</span>
+          <form
+            method="post"
+            action={`/moderation/topics/${topic.id}/show/`}
+            style="display:inline-block;margin-left:10px"
+          >
+            <input type="hidden" name="reason" value="восстановлен" />
+            <button
+              type="submit"
+              style="display:inline-block;padding:2px 10px;background:#e8f6e8;border:1px solid #a8c9a0;cursor:pointer;color:#360;font-family:inherit;font-size:inherit"
+            >
+              ✓ Показать
+            </button>
+          </form>
+        </div>
       ) : null}
     </div>
   );

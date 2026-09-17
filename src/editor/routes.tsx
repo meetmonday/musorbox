@@ -109,6 +109,7 @@ async function renderForm(c: any, values: {
 async function handleSubmit(c: any) {
   const user = c.get("user");
   if (!user) return c.redirect("/login");
+  if (user.banned) return c.redirect("/login");
   const form = await c.req.parseBody();
   const title = String(form["title"] ?? "").trim();
   const categoryId = Number(form["category_id"] ?? 0);

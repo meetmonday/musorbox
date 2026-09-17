@@ -4,10 +4,32 @@ import { getDrizzle } from "../core/db";
 import { votes, topics, comments } from "../core/schema";
 import type { UserContext } from "../core/middleware";
 import { requireAuth } from "../core/middleware";
+import { createNotification } from "../notifications/service";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
 type VoteResponse = { ok: true; up: number; down: number } | { ok: false; error: string };
+
+async function notifyLike(
+  voterUserId: number,
+  entityType: "topic" | "comment",
+  entityId: number,
+): Promise<void> {
+  const db = getDrizzle();
+  const target = entityType === "topic"
+    ? await db.select({ authorId: topics.authorId, hidden: topics.hidden }).from(topics).where(eq(topics.id, entityId)).limit(1)
+    : (await db.select({ authorId: comments.authorId, hidden: comments.hidden }).from(comments).where(eq(comments.id, entityId)).limit(1));
+  const row = target[0];
+  if (!row || row.hidden || row.authorId == null || row.authorId === voterUserId) return;
+  await createNotification({
+    userId: row.authorId,
+    actorId: voterUserId,
+    type: "like",
+    topicId: entityType === "topic" ? entityId : undefined,
+    commentId: entityType === "comment" ? entityId : undefined,
+    eventKey: `like:${entityType}:${entityId}`,
+  });
+}
 
 async function castVote(
   c: any,
@@ -17,6 +39,7 @@ async function castVote(
 ): Promise<VoteResponse> {
   const user = c.get("user");
   const db = getDrizzle();
+  if (user.banned) return { ok: false, error: "Аккаунт заблокирован" };
 
   const existing = await db
     .select({ value: votes.value })
@@ -38,6 +61,7 @@ async function castVote(
 
   const upDelta = value === 1 ? 1 : oldValue === 1 ? -1 : 0;
   const downDelta = value === -1 ? 1 : oldValue === -1 ? -1 : 0;
+  if (value === 1) await notifyLike(user.id, entityType, entityId);
 
   if (entityType === "topic") {
     const topic = await db.query.topics.findFirst({ where: eq(topics.id, entityId) });

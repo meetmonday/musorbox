@@ -13,6 +13,8 @@ import usersRoutes from "./users/routes";
 import editorRoutes from "./editor/routes";
 import pagesRoutes from "./pages/routes";
 import activityPubRoutes from "./activitypub/routes";
+import notificationsRoutes from "./notifications/routes";
+import moderationRoutes from "./moderation/routes";
 
 type AppEnv = {
   Variables: UserContext;
@@ -38,6 +40,8 @@ app.route("/", votesRoutes);
 app.route("/", usersRoutes);
 app.route("/", editorRoutes);
 app.route("/", pagesRoutes);
+app.route("/", notificationsRoutes);
+app.route("/", moderationRoutes);
 
 app.all("*", (c) => c.text("Not found", 404));
 

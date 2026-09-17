@@ -23,8 +23,13 @@ import {
   SidebarAd,
 } from "../sidebar/components";
 import { CommentFragment, CommentList, CommentForm } from "../comments/components";
-import { getComments, addComment, getCommentById, getCommentChildrenCount, deleteComment } from "../comments/service";
-import { deleteTopic } from "./service";
+import { getComments, addComment, getCommentById, getCommentChildrenCount, deleteComment, updateComment } from "../comments/service";
+import { deleteTopic, updateTopic } from "./service";
+import { isStaff } from "../core/middleware";
+import { NewTopicForm, editorHead, CONTENT_FIELD } from "../editor/components";
+import { getForumTags } from "../forum/service";
+import { getEditableCategories } from "./service";
+import { slugify, sanitizeHtml, stripTags, firstImageSrc } from "../core/utils";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
@@ -193,11 +198,15 @@ app.get("/topics/:id/:slug", async (c) => {
   if (!topic) return c.notFound();
 
   const me = c.get("user");
-  const canDeleteTopic = Boolean(me && (topic.authorId === me.id || me.role !== "user"));
-  const canDeleteComments = Boolean(me && me.role !== "user");
+  const canDeleteTopic = Boolean(me && (topic.authorId === me.id || isStaff(me)));
+  const canEditTopic = canDeleteTopic;
+  const canModerate = Boolean(me && isStaff(me));
+  const canDeleteComments = Boolean(me && isStaff(me));
   const currentUserId = me?.id ?? null;
+  if (topic.hidden && !(me && (topic.authorId === me.id || isStaff(me)))) return c.notFound();
 
-  const [sidebar, comments] = await Promise.all([renderSidebar(), getComments(id)]);
+  const [sidebar, comments] = await Promise.all([renderSidebar(), getComments(id, Boolean(me && isStaff(me)))]);
+  const hiddenVisible = Boolean(me && (topic.authorId === me.id || isStaff(me)));
   const html = await layoutWithSidebar({
     title: `${topic.title} — ${config.siteName}`,
     description: topic.body.replace(/<[^>]*>/g, "").slice(0, 160),
@@ -209,12 +218,13 @@ app.get("/topics/:id/:slug", async (c) => {
     ),
     children: (
       <div>
-        <TopicDetailView topic={topic} canDelete={canDeleteTopic} />
+        <TopicDetailView topic={topic} canDelete={canDeleteTopic} canEdit={canEditTopic} canModerate={canModerate} hiddenVisible={hiddenVisible} />
         <a name="comments" />
         <div id="div_comments_0">
           <CommentList
             comments={comments}
             canDelete={canDeleteComments}
+            canModerate={canModerate}
             currentUserId={currentUserId}
           />
           <CommentForm topicId={topic.id} loggedIn={Boolean(c.get("user"))} />
@@ -248,6 +258,10 @@ async function postComment(c: any, user: any, parentId: number | null) {
     if (xhr) return c.json({ ok: false, error: "auth" }, 401);
     return c.redirect("/login");
   }
+  if (user.banned) {
+    if (xhr) return c.json({ ok: false, error: "banned" }, 403);
+    return c.redirect("/login");
+  }
   const id = Number(c.req.param("id")) || 0;
   const topic = await getTopicBySlug(id);
   if (!topic) return c.notFound();
@@ -261,12 +275,150 @@ async function postComment(c: any, user: any, parentId: number | null) {
   if (xhr) {
     const fresh = await getCommentById(commentId);
     let html = "";
-    const canDel = user.role !== "user";
-    if (fresh) html = String(<CommentFragment comment={fresh} canDelete={canDel} currentUserId={user.id} />);
+    const canModerate = isStaff(user);
+    if (fresh) html = String(<CommentFragment comment={fresh} canDelete={canModerate} canModerate={canModerate} currentUserId={user.id} />);
     return c.json({ ok: true, html, parentId });
   }
   return c.redirect(`/topics/${id}/${topic.slug}#div_comments_0`);
 }
+
+app.get("/topics/:id/:slug/edit", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/login");
+  const id = Number(c.req.param("id")) || 0;
+  const topic = await getTopicBySlug(id);
+  if (!topic) return c.notFound();
+  if (topic.authorId !== user.id && !isStaff(user)) return c.text("Forbidden", 403);
+  const [categories, { os, quest }, sidebar] = await Promise.all([
+    getEditableCategories(),
+    getForumTags(),
+    renderSidebar(),
+  ]);
+  return c.html(
+    await layoutWithSidebar({
+      title: `Редактирование топика — ${config.siteName}`,
+      user,
+      head: editorHead,
+      sidebar,
+      children: (
+        <NewTopicForm
+          editing
+          action={`/topics/${topic.id}/${topic.slug}/edit/`}
+          categories={categories}
+          os={os}
+          quest={quest}
+          title={topic.title}
+          categoryId={topic.categoryId}
+          tagIds={topic.tags.map((t) => t.id)}
+          body={topic.body}
+        />
+      ),
+    }),
+  );
+});
+
+app.post("/topics/:id/:slug/edit", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/login");
+  if (user.banned) return c.redirect("/login");
+  const id = Number(c.req.param("id")) || 0;
+  const topic = await getTopicBySlug(id);
+  if (!topic) return c.notFound();
+  if (topic.authorId !== user.id && !isStaff(user)) return c.text("Forbidden", 403);
+
+  const form = await c.req.parseBody();
+  const title = String(form["title"] ?? "").trim();
+  const categoryId = Number(form["category_id"] ?? 0);
+  const content = String(form[CONTENT_FIELD] ?? "").trim();
+  const rawTags = form["tag_ids"];
+  const tagIds = (Array.isArray(rawTags) ? rawTags : rawTags !== undefined ? [rawTags] : [])
+    .map((v) => Number(v))
+    .filter((v) => Number.isInteger(v) && v > 0);
+
+  const renderError = async (error: string) => {
+    const [categories, { os, quest }, sidebar] = await Promise.all([
+      getEditableCategories(),
+      getForumTags(),
+      renderSidebar(),
+    ]);
+    return c.html(
+      await layoutWithSidebar({
+        title: "Редактирование топика",
+        user,
+        head: editorHead,
+        sidebar,
+        children: (
+          <NewTopicForm
+            editing
+            action={`/topics/${topic.id}/${topic.slug}/edit/`}
+            categories={categories}
+            os={os}
+            quest={quest}
+            title={title}
+            categoryId={categoryId || topic.categoryId}
+            tagIds={tagIds}
+            body={content}
+            error={error}
+          />
+        ),
+      }),
+    );
+  };
+
+  if (!title) return renderFormError(c, renderError, "Укажите заголовок топика.");
+  if (title.length > 200) return renderFormError(c, renderError, "Слишком длинный заголовок (не больше 200 символов).");
+  const body = sanitizeHtml(content);
+  if (stripTags(body).length === 0 && !firstImageSrc(body)) {
+    return renderFormError(c, renderError, "Текст топика не может быть пустым.");
+  }
+  if (body.length > 200_000) return renderFormError(c, renderError, "Текст топика слишком большой.");
+
+  const categories = await getEditableCategories();
+  const category = categories.find((x) => x.id === categoryId);
+  if (!category) return renderFormError(c, renderError, "Выберите раздел.");
+
+  const { os, quest } = await getForumTags();
+  const validTagIds = new Set([...os, ...quest].map((t) => t.id));
+  const allowedTags = [...new Set(tagIds)].filter((id) => validTagIds.has(id)).slice(0, 10);
+
+  await updateTopic(topic.id, {
+    title,
+    body,
+    categoryId: category.id,
+    leadImage: firstImageSrc(body),
+    tagIds: allowedTags,
+  });
+  return c.redirect(`/topics/${topic.id}/${topic.slug}`);
+});
+
+function renderFormError(c: any, render: (error: string) => Promise<any>, error: string) {
+  return render(error);
+}
+
+app.post("/topics/:id/edit_comment/:commentId", async (c) => {
+  const user = c.get("user");
+  const xhr = isXhr(c);
+  if (!user) return xhr ? c.json({ ok: false, error: "auth" }, 401) : c.redirect("/login");
+  if (user.banned) return xhr ? c.json({ ok: false, error: "banned" }, 403) : c.redirect("/login");
+  const id = Number(c.req.param("id")) || 0;
+  const commentId = Number(c.req.param("commentId")) || 0;
+  const comment = await getCommentById(commentId);
+  if (!comment || comment.topicId !== id) return c.notFound();
+  if (comment.authorId !== user.id) return c.text("Forbidden", 403);
+  const form = await c.req.parseBody();
+  const text = String(form.body ?? "").trim().slice(0, 4000);
+  if (!text) return c.json({ ok: false, error: "empty" });
+  const updated = await updateComment(commentId, sanitizeHtml(text));
+  if (!updated) return c.text("Forbidden", 403);
+  if (xhr) {
+    const fresh = await getCommentById(commentId);
+    let html = "";
+    const canModerate = isStaff(user);
+    if (fresh) html = String(<CommentFragment comment={fresh} canDelete={canModerate} canModerate={canModerate} currentUserId={user.id} />);
+    return c.json({ ok: true, html });
+  }
+  return c.redirect(`/topics/${id}/${comment.topicId}#div_comment_${commentId}`);
+});
 
 app.post("/topics/:id/delete_comment/:commentId", async (c) => {
   const user = c.get("user");
@@ -277,7 +429,7 @@ app.post("/topics/:id/delete_comment/:commentId", async (c) => {
   if (!topic) return c.notFound();
   const comment = await getCommentById(commentId);
   if (!comment || comment.topicId !== id) return c.notFound();
-  const canModerate = comment.authorId === user.id || user.role !== "user";
+  const canModerate = comment.authorId === user.id || isStaff(user);
   if (!canModerate) return c.text("Forbidden", 403);
   const replies = await getCommentChildrenCount(commentId);
   if (replies > 0) return c.redirect(`/topics/${id}/${topic.slug}#div_comments_0`);
@@ -291,7 +443,7 @@ app.post("/topics/:id/delete", async (c) => {
   const id = Number(c.req.param("id")) || 0;
   const topic = await getTopicBySlug(id);
   if (!topic) return c.notFound();
-  const canModerate = topic.authorId === user.id || user.role !== "user";
+  const canModerate = topic.authorId === user.id || isStaff(user);
   if (!canModerate) return c.text("Forbidden", 403);
   await deleteTopic(id);
   return c.redirect(`/public/${topic.categorySlug}/`);
