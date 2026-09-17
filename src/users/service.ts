@@ -1,3 +1,6 @@
+import { mkdirSync } from "node:fs";
+import { unlink } from "node:fs/promises";
+import sharp from "sharp";
 import { getDrizzle } from "../core/db";
 import { users, topics, comments, categories } from "../core/schema";
 import { and, eq, sql, desc, count } from "drizzle-orm";
@@ -261,17 +264,38 @@ export type SaveSettingsResult =
   | { ok: true }
   | { ok: false; error: string; field?: string };
 
+async function removeAvatar(avatarUrl: string | null) {
+  if (!avatarUrl || !/^\/avatars\/\d+_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_avatar\.webp$/.test(avatarUrl)) return;
+  try {
+    const reference = await getDrizzle().query.users.findFirst({
+      where: sql`${users.avatarUrl} LIKE ${`%${avatarUrl}%`}`,
+      columns: { id: true },
+    });
+    if (reference) return;
+  } catch (error) {
+    console.error("Не удалось проверить старый аватар:", error);
+    return;
+  }
+  try {
+    await unlink(`public${avatarUrl}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error("Не удалось удалить старый аватар:", error);
+  }
+}
+
 export async function updateUserProfile(
   username: string,
   data: ProfileInput,
+  avatar?: File,
 ): Promise<SaveSettingsResult> {
   const limits = { fullName: 100, country: 100, city: 100, vkUrl: 500, twitterUrl: 500, skype: 100, devices: 1000, avatarUrl: 2000 };
   for (const [field, limit] of Object.entries(limits)) {
+    if (field === "avatarUrl" && avatar) continue;
     if (data[field as keyof typeof limits].trim().length > limit) {
       return { ok: false, error: `Значение поля слишком длинное (не более ${limit} символов).`, field };
     }
   }
-  const avatarUrl = data.avatarUrl.trim();
+  let avatarUrl = avatar ? "" : data.avatarUrl.trim();
   if (avatarUrl && !/^\/(?!\/)/.test(avatarUrl)) {
     try {
       const url = new URL(avatarUrl);
@@ -283,20 +307,49 @@ export async function updateUserProfile(
   const db = getDrizzle();
   const user = await db.query.users.findFirst({ where: eq(users.username, username) });
   if (!user) return { ok: false, error: "Пользователь не найден." };
-  await db
-    .update(users)
-    .set({
-      fullName: data.fullName.trim() || null,
-      country: data.country.trim() || null,
-      city: data.city.trim() || null,
-      vkUrl: data.vkUrl.trim() || null,
-      twitterUrl: data.twitterUrl.trim() || null,
-      skype: data.skype.trim() || null,
-      devices: data.devices.trim() || null,
-      avatarUrl: avatarUrl || null,
-      ratingOptout: data.ratingOptout,
-    })
-    .where(eq(users.id, user.id));
+  if (avatar) {
+    if (!["image/jpeg", "image/png", "image/gif", "image/webp"].includes(avatar.type) || avatar.size > 8 * 1024 * 1024) {
+      return { ok: false, error: "Недопустимый формат аватара (jpg/png/gif/webp, до 8 МБ)." };
+    }
+    let image: Buffer;
+    try {
+      image = await sharp(Buffer.from(await avatar.arrayBuffer()), { animated: false })
+        .rotate()
+        .resize(128, 128, { fit: "cover", position: "centre" })
+        .webp({ quality: 80 })
+        .toBuffer();
+    } catch {
+      return { ok: false, error: "Не удалось прочитать изображение. Выберите исправный файл JPG, PNG, GIF или WebP." };
+    }
+    avatarUrl = `/avatars/${Date.now()}_${crypto.randomUUID()}_avatar.webp`;
+    try {
+      mkdirSync("public/avatars", { recursive: true });
+      await Bun.write(`public${avatarUrl}`, image);
+    } catch {
+      await removeAvatar(avatarUrl);
+      return { ok: false, error: "Не удалось сохранить аватар. Попробуйте ещё раз." };
+    }
+  }
+  try {
+    await db
+      .update(users)
+      .set({
+        fullName: data.fullName.trim() || null,
+        country: data.country.trim() || null,
+        city: data.city.trim() || null,
+        vkUrl: data.vkUrl.trim() || null,
+        twitterUrl: data.twitterUrl.trim() || null,
+        skype: data.skype.trim() || null,
+        devices: data.devices.trim() || null,
+        avatarUrl: avatarUrl || null,
+        ratingOptout: data.ratingOptout,
+      })
+      .where(eq(users.id, user.id));
+  } catch (error) {
+    if (avatar) await removeAvatar(avatarUrl);
+    throw error;
+  }
+  if (user.avatarUrl !== avatarUrl) await removeAvatar(user.avatarUrl);
   void notifyProfileUpdated(user.id);
   return { ok: true };
 }

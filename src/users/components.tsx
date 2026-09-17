@@ -88,18 +88,34 @@ export const SettingsPage: FC<{
     ["twitterUrl", "twitter", "Twitter", 500],
     ["skype", "skype", "Skype", 100],
     ["devices", "devices", "Устройства", 1000],
-    ["avatarUrl", "avatar_url", "Адрес аватара", 2000],
   ] as const;
   const action = `/users/${profile.username}/settings`;
   return (
-    <div class="text12">
+    <div class="text12" id="user_settings">
+      <style>{`
+        #user_settings .div_auth_table { width:100%; table-layout:fixed; }
+        #user_settings .div_auth_table td { overflow-wrap:anywhere; }
+        #user_settings .div_auth_table td:first-child { width:160px; }
+        #user_settings .input_auth { box-sizing:border-box; width:320px; max-width:100%; }
+        @media (max-width:600px) {
+          #user_settings .div_auth_table,
+          #user_settings .div_auth_table tbody,
+          #user_settings .div_auth_table tr,
+          #user_settings .div_auth_table td { display:block; width:auto; }
+          #user_settings .div_auth_table td:first-child { width:auto; }
+          #user_settings .div_auth_table td:empty { display:none; }
+          #user_settings .div_auth_table tr { margin-bottom:8px; }
+          #user_settings .auth_label { text-align:left; }
+          #user_settings .input_auth { width:100%; }
+        }
+      `}</style>
       <h1 class="h_page_header">Настройки профиля</h1>
       <p><a href={`/users/${profile.username}/`}>Вернуться в профиль</a></p>
       {error ? <div style="color:#EE0000;margin-bottom:10px" role="alert">{error}</div> : null}
       {saved ? <div class="div_block" role="status">Профиль сохранён.</div> : null}
       <div class="div_block">
         <h2>Личные данные</h2>
-        <form method="post" action={action} id="frm_settings_profile">
+        <form method="post" action={action} enctype="multipart/form-data" id="frm_settings_profile">
           <input type="hidden" name="action" value="profile" />
           <table class="div_auth_table"><tbody>
             {fields.map(([key, name, label, limit]) => (
@@ -108,6 +124,10 @@ export const SettingsPage: FC<{
                 <td><input id={`settings_${name}`} class="input_auth" type="text" name={name} maxlength={limit} value={(values ?? profile)[key] ?? ""} /></td>
               </tr>
             ))}
+            <tr><td class="auth_label">Аватар:</td><td><img class="avatar" src={avatarSrc(profile.avatarUrl)} alt="Текущий аватар" width="128" height="128" style="object-fit:cover" /></td></tr>
+            <tr><td class="auth_label"><label for="settings_avatar">Загрузить аватар:</label></td><td><input id="settings_avatar" class="input_auth" type="file" name="avatar" accept="image/jpeg,image/png,image/gif,image/webp" /></td></tr>
+            <tr><td /><td class="dark">JPG, PNG, GIF или WebP, до 8 МБ. Аватар будет обрезан до квадрата 128×128. Для анимации используется первый кадр. Выбранный файл заменит адрес ниже.</td></tr>
+            <tr><td class="auth_label"><label for="settings_avatar_url">Или адрес аватара:</label></td><td><input id="settings_avatar_url" class="input_auth" type="text" name="avatar_url" maxlength={2000} value={(values ?? profile).avatarUrl ?? ""} /></td></tr>
             <tr><td /><td class="dark">Адрес изображения по HTTP/HTTPS или путь на сайте. Пустое поле — аватар по умолчанию.</td></tr>
             <tr><td /><td><label><input type="checkbox" name="rating_optout" value="1" checked={(values ?? profile).ratingOptout} /> Не участвовать в рейтинге</label></td></tr>
             <tr><td /><td><button type="submit" class="blue" style="padding:5px 15px;border:0;cursor:pointer">Сохранить профиль</button></td></tr>

@@ -14,7 +14,7 @@
     "seed:structure": "bun run scripts/seed_structure.ts",
     "seed:full": "bun run src/core/seed.ts",
     "seed": "bun run src/core/seed.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@libsql/client": "^0.18.0",
@@ -27,6 +27,7 @@
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.7"
+    "hono": "^4.13.7",
+    "sharp": "^0.35.4"
   }
 }

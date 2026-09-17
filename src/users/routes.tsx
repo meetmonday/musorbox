@@ -114,10 +114,12 @@ async function handleSettings(c: AppContext) {
     twitterUrl: str("twitter"),
     skype: str("skype"),
     devices: str("devices"),
-    avatarUrl: str("avatar_url"),
+    avatarUrl: typeof body["avatar_url"] === "string" ? body["avatar_url"] : profile.avatarUrl ?? "",
     ratingOptout: str("rating_optout") === "1",
   };
-  const result = await updateUserProfile(username, values);
+  const upload = body["avatar"];
+  const avatar = upload instanceof File && (upload.name !== "" || upload.size > 0) ? upload : undefined;
+  const result = await updateUserProfile(username, values, avatar);
   if (!result.ok) return renderSettings(c, profile, { values, error: result.error });
   return c.redirect(`/users/${username}/settings?saved=1`);
 }
