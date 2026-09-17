@@ -1,5 +1,5 @@
 import type { FC } from "hono/jsx";
-import type { UserProfile, RatingInfo } from "./service";
+import type { UserProfile, RatingInfo, ProfileInput } from "./service";
 import type { FollowingUiItem } from "../activitypub/service";
 import { formatDateDots, pluralize } from "../core/utils";
 import { avatarSrc } from "../topics/components";
@@ -34,7 +34,7 @@ const RankBox: FC<{
             {votes}&nbsp;
             {pluralize(votes, "голос", "голоса", "голосов")}
           </td>
-          <td style="line-height:100%;font-size:48px;text-align:right;padding:0px 5px 5px 0px;">
+          <td style="line-height:100%;font-size:48px;text-align:right;padding:0px">
             <span style="position:relative;top:-5px;right:5px">
               <a href={sortHref} style="text-decoration:none">
                 {place ?? "—"}
@@ -54,64 +54,82 @@ const RatingBar: FC<{
   max: number;
   maxUsername: string | null;
 }> = ({ label, value, pct, max, maxUsername }) => (
-  <div class="td_rank_pos">
+  <td class="td_rank_pos">
     <div style="color:#999999;padding-bottom:5px">{label}</div>
-    <table
-      width="100%"
-      style={`margin-bottom:5px;background-size:${pct}% 100%;height:25px;color:white;font-size:18px;line-height:18px;vertical-align:middle;background-color:#C0C0C0;background-image:url('/img/blank-blue.png');background-repeat:no-repeat`}
-    >
-      <tbody>
-        <tr>
-          <td>{value > 0 ? value : ""}</td>
-          <td></td>
-        </tr>
-      </tbody>
+    <table width="100%" style={`margin-bottom:5px;background-size:${pct}% 100%;height:25px;color:white;font-size:18px;line-height:18px;vertical-align:middle;background-color:#C0C0C0;background-image:url('/img/blank-blue.png');background-repeat:no-repeat`}>
+      <tbody><tr><td>{value}</td><td></td></tr></tbody>
     </table>
-    <div style="text-align:right;color:#999999">
-      макс.{" "}
-      {maxUsername ? <a href={`/users/${maxUsername}/`}>{max}</a> : max}
-    </div>
-  </div>
+    <div style="text-align:right;color:#999999">макс. {maxUsername ? <a href={`/users/${maxUsername}`}>{max}</a> : max}</div>
+  </td>
 );
 
 const InfoField: FC<{
   label: string;
   value: string | null;
   href?: string;
-  isOwner: boolean;
-  name?: string;
-}> = ({ label, value, href, isOwner, name }) =>
-  isOwner ? (
-    <tr>
-      <td align="right" style="color:#777777;padding-right:10px">
-        {label}
-      </td>
-      <td>
-        <input
-          type="text"
-          name={name}
-          size={30}
-          value={value ?? ""}
-          style="border:1px solid #cccccc;padding:2px 4px"
-        />
-      </td>
-    </tr>
-  ) : value ? (
-    <tr>
-      <td align="right" style="color:#777777;padding-right:10px">
-        {label}
-      </td>
-      <td>
-        {href ? (
-          <a href={href} rel="nofollow">
-            {value}
-          </a>
-        ) : (
-          value
-        )}
-      </td>
-    </tr>
-  ) : null;
+}> = ({ label, value, href }) => value ? (
+  <tr>
+    <td align="right" style="color:#777777;padding-right:10px">{label}</td>
+    <td>{href ? <a href={href} rel="nofollow">{value}</a> : value}</td>
+  </tr>
+) : null;
+
+export const SettingsPage: FC<{
+  profile: UserProfile;
+  values?: ProfileInput;
+  error?: string;
+  saved?: boolean;
+}> = ({ profile, values, error, saved }) => {
+  const fields = [
+    ["fullName", "full_name", "Полное имя", 100],
+    ["country", "country", "Страна", 100],
+    ["city", "city", "Город", 100],
+    ["vkUrl", "vk", "ВК", 500],
+    ["twitterUrl", "twitter", "Twitter", 500],
+    ["skype", "skype", "Skype", 100],
+    ["devices", "devices", "Устройства", 1000],
+    ["avatarUrl", "avatar_url", "Адрес аватара", 2000],
+  ] as const;
+  const action = `/users/${profile.username}/settings`;
+  return (
+    <div class="text12">
+      <h1 class="h_page_header">Настройки профиля</h1>
+      <p><a href={`/users/${profile.username}/`}>Вернуться в профиль</a></p>
+      {error ? <div style="color:#EE0000;margin-bottom:10px" role="alert">{error}</div> : null}
+      {saved ? <div class="div_block" role="status">Профиль сохранён.</div> : null}
+      <div class="div_block">
+        <h2>Личные данные</h2>
+        <form method="post" action={action} id="frm_settings_profile">
+          <input type="hidden" name="action" value="profile" />
+          <table class="div_auth_table"><tbody>
+            {fields.map(([key, name, label, limit]) => (
+              <tr key={name}>
+                <td class="auth_label"><label for={`settings_${name}`}>{label}:</label></td>
+                <td><input id={`settings_${name}`} class="input_auth" type="text" name={name} maxlength={limit} value={(values ?? profile)[key] ?? ""} /></td>
+              </tr>
+            ))}
+            <tr><td /><td class="dark">Адрес изображения по HTTP/HTTPS или путь на сайте. Пустое поле — аватар по умолчанию.</td></tr>
+            <tr><td /><td><label><input type="checkbox" name="rating_optout" value="1" checked={(values ?? profile).ratingOptout} /> Не участвовать в рейтинге</label></td></tr>
+            <tr><td /><td><button type="submit" class="blue" style="padding:5px 15px;border:0;cursor:pointer">Сохранить профиль</button></td></tr>
+          </tbody></table>
+        </form>
+      </div>
+      <div class="div_block">
+        <h2>Смена пароля</h2>
+        <form method="post" action={action} id="frm_settings_password">
+          <input type="hidden" name="action" value="password" />
+          <table class="div_auth_table"><tbody>
+            <tr><td class="auth_label"><label for="current_password">Текущий пароль:</label></td><td><input id="current_password" class="input_auth" type="password" name="current_password" autocomplete="current-password" required /></td></tr>
+            <tr><td class="auth_label"><label for="new_password">Новый пароль:</label></td><td><input id="new_password" class="input_auth" type="password" name="new_password" autocomplete="new-password" required /></td></tr>
+            <tr><td class="auth_label"><label for="repeat_password">Повторите пароль:</label></td><td><input id="repeat_password" class="input_auth" type="password" name="repeat_password" autocomplete="new-password" required /></td></tr>
+            <tr><td /><td class="dark">После смены пароля потребуется войти снова на всех устройствах.</td></tr>
+            <tr><td /><td><button type="submit" class="blue" style="padding:5px 15px;border:0;cursor:pointer">Изменить пароль</button></td></tr>
+          </tbody></table>
+        </form>
+      </div>
+    </div>
+  );
+};
 
 export const ProfilePage: FC<{
   profile: UserProfile;
@@ -119,249 +137,81 @@ export const ProfilePage: FC<{
   isOwner: boolean;
   following?: FollowingUiItem[];
 }> = ({ profile, rating, isOwner, following = [] }) => {
-  const name = profile.fullName || profile.username;
   const handle = profile.username;
-  const registerAt = formatDateDots(profile.createdAt);
-  const lastSeen = profile.lastSeenAt ? formatDateDots(profile.lastSeenAt) : registerAt;
-  const topicsText = `${profile.topicsCount} ${pluralize(profile.topicsCount, "топик", "топика", "топиков")}`;
-  const discussedText = `${profile.discussedTopics} ${pluralize(
-    profile.discussedTopics,
-    "топик",
-    "топика",
-    "топиков",
-  )}`;
-
+  const hasContacts = !!(profile.country || profile.city || profile.vkUrl || profile.twitterUrl || profile.skype || profile.devices);
   return (
     <div>
-      <form
-        method="post"
-        id="frm_profile"
-        class="text12"
-        action={`/users/${profile.username}/`}
-      >
-      <input type="hidden" name="edit_profile" value="1" />
-      <div style="margin-right:40px">
-        <table style="margin-bottom:10px">
-          <tbody>
+      <div id="frm_profile" class="text12">
+        <div style="margin-right:40px">
+          <table style="margin-bottom:10px"><tbody>
             <tr>
               <td style="padding-right:20px">
-                <table cellpadding="0" cellspacing="0">
-                  <tbody>
-                    <tr>
-                      <td>
-                        <img
-                          style="margin-right:10px;width:90px;height:90px"
-                          src={avatarSrc(profile.avatarUrl)}
-                          class="left"
-                          alt=""
-                        />
-                      </td>
-                      <td>
-                        {isOwner ? (
-                          <input
-                            type="text"
-                            name="full_name"
-                            value={name}
-                            style="font-size:1.9em;font-weight:bold;border:1px solid #cccccc;padding:2px 6px"
-                          />
-                        ) : (
-                          <h1>{name}</h1>
-                        )}
-                        <div style="color:#999999;font-size:10px;padding-top:10px">
-                          {roleTitle(profile.role)}
-                          <br />
-                          <nobr>Зарегистрирован: {registerAt}</nobr>
-                          <br />
-                          <nobr>Был на сайте: {lastSeen}</nobr>
-                          <br />
-                          <b>Обсуждаемых топиков: {discussedText}</b>
-                          <br />
-                        </div>
-                        <br />
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+                <table cellpadding="0" cellspacing="0"><tbody><tr>
+                  <td><img style="margin-right:10px" src={avatarSrc(profile.avatarUrl)} class="left" alt="" /></td>
+                  <td>
+                    <h1>{profile.fullName || handle}</h1>
+                    <div style="color:#999999;font-size:10px;padding-top:10px">
+                      {roleTitle(profile.role)}<br />
+                      {profile.createdAt ? <><nobr>Зарегистрирован: {formatDateDots(profile.createdAt)}</nobr><br /></> : null}
+                      {profile.lastSeenAt ? <><nobr>Был на сайте: {formatDateDots(profile.lastSeenAt)}</nobr><br /></> : null}
+                      <b>Обсуждаемых топиков: {profile.discussedTopics}</b><br />
+                    </div><br />
+                  </td>
+                </tr></tbody></table>
               </td>
               <td>
-                <div
-                  style="float:left;border:5px solid #f0f0f0;padding:5px 10px;font-size:14px"
-                >
-                  <div style="padding:2px 0px">
-                    <a href={`/user_topics/${profile.username}/`}>
-                      Все топики {handle}
-                    </a>{" "}
-                    [{topicsText}]
-                  </div>
-                </div>
-                <br class="clear" />
+                <div style="float:left;border:5px solid #f0f0f0;padding:5px 10px;font-size:14px">
+                  <div style="padding:2px 0px"><a href={`/user_topics/${handle}/`}>Все топики {handle}</a> [{profile.topicsCount}]</div>
+                </div><br class="clear" />
               </td>
             </tr>
             <tr>
               <td>
                 <style>{`.td_rank_pos{padding:0px 10px 5px 0px;width:165px;}`}</style>
-                <table>
-                  <tbody>
-                    {rating ? (
-                      <>
-                        <tr>
-                          <td class="td_rank_pos">
-                            <RankBox
-                              title={
-                                <>
-                                  место в рейтинге
-                                  <br />
-                                  конкурса
-                                </>
-                              }
-                              sortHref="/public/users/"
-                              votes={rating.contestVotes}
-                              place={rating.contestPlace}
-                            />
-                          </td>
-                          <td class="td_rank_pos">
-                            <RankBox
-                              title={
-                                <>
-                                  место в общем
-                                  <br />
-                                  рейтинге
-                                </>
-                              }
-                              sortHref="/public/users/?sort=rank_all"
-                              votes={rating.overallVotes}
-                              place={rating.overallPlace}
-                            />
-                          </td>
-                        </tr>
-                        <tr>
-                          <RatingBar
-                            label="рейтинг конкурса"
-                            value={rating.contestValue}
-                            pct={rating.contestPct}
-                            max={rating.contestMax}
-                            maxUsername={rating.contestMaxUsername}
-                          />
-                          <RatingBar
-                            label="общий рейтинг"
-                            value={rating.overallValue}
-                            pct={rating.overallPct}
-                            max={rating.overallMax}
-                            maxUsername={rating.overallMaxUsername}
-                          />
-                        </tr>
-                      </>
-                    ) : (
-                      <>
-                        <tr>
-                          <td class="td_rank_pos">
-                            <div style="background-color:#ff4d4d" class="white">
-                              <div style="padding:5px 10px">
-                                {handle} не участвует в рейтинге
-                              </div>
-                              <table width="100%">
-                                <tbody>
-                                  <tr>
-                                    <td style="vertical-align:middle;font-size:10px;padding:0px 10px 5px 10px;opacity:0.5"></td>
-                                    <td style="line-height:100%;font-size:48px;text-align:right;padding:0px 5px 5px 0px">
-                                      <span style="position:relative;top:-5px;right:5px">
-                                        <a href="/public/users/" style="text-decoration:none"></a>
-                                      </span>
-                                    </td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                            </div>
-                          </td>
-                          <td class="td_rank_pos"></td>
-                        </tr>
-                        <tr></tr>
-                      </>
-                    )}
-                  </tbody>
-                </table>
+                <table><tbody>
+                  {rating ? <>
+                    <tr>
+                      <td class="td_rank_pos"><RankBox title={<>место в рейтинге<br />конкурса</>} sortHref="/public/users/" votes={rating.contestVotes} place={rating.contestPlace} /></td>
+                      <td class="td_rank_pos"><RankBox title={<>место в общем<br />рейтинге</>} sortHref="/public/users/?sort=rank_all" votes={rating.overallVotes} place={rating.overallPlace} /></td>
+                    </tr>
+                    <tr>
+                      <RatingBar label="рейтинг конкурса" value={rating.contestValue} pct={rating.contestPct} max={rating.contestMax} maxUsername={rating.contestMaxUsername} />
+                      <RatingBar label="общий рейтинг" value={rating.overallValue} pct={rating.overallPct} max={rating.overallMax} maxUsername={rating.overallMaxUsername} />
+                    </tr>
+                  </> : <>
+                    <tr>
+                      <td class="td_rank_pos">
+                        <div style="background-color:#ff4d4d" class="white">
+                          <div style="padding:5px 10px">{handle} не участвует в рейтинге</div>
+                          <table width="100%"><tbody><tr>
+                            <td style="vertical-align:middle;font-size:10px;padding:0px 10px 5px 10px;opacity:0.5"></td>
+                            <td style="line-height:100%;font-size:48px;text-align:right;padding:0px"><span style="position:relative;top:-5px;right:5px"><a href="/public/users/" style="text-decoration:none"></a></span></td>
+                          </tr></tbody></table>
+                        </div>
+                      </td>
+                      <td class="td_rank_pos"></td>
+                    </tr><tr></tr>
+                  </>}
+                </tbody></table>
               </td>
               <td style="padding-top:10px">
-                <table>
-                  <tbody>
-                    <InfoField
-                      label="Страна"
-                      value={profile.country}
-                      isOwner={isOwner}
-                      name="country"
-                    />
-                    <InfoField
-                      label="Город"
-                      value={profile.city}
-                      isOwner={isOwner}
-                      name="city"
-                    />
-                    <tr>
-                      <td>
-                        <br />
-                      </td>
-                    </tr>
-                    <InfoField
-                      label="ВК"
-                      value={profile.vkUrl}
-                      href={
-                        profile.vkUrl
-                          ? profile.vkUrl.startsWith("http")
-                            ? profile.vkUrl
-                            : `http://vk.com/${profile.vkUrl}`
-                          : undefined
-                      }
-                      isOwner={isOwner}
-                      name="vk"
-                    />
-                    <InfoField
-                      label="Twitter"
-                      value={profile.twitterUrl}
-                      href={
-                        profile.twitterUrl
-                          ? profile.twitterUrl.startsWith("http")
-                            ? profile.twitterUrl
-                            : `http://twitter.com/${profile.twitterUrl}`
-                          : undefined
-                      }
-                      isOwner={isOwner}
-                      name="twitter"
-                    />
-                    <InfoField label="Skype" value={profile.skype} isOwner={isOwner} name="skype" />
-                    <InfoField
-                      label="Устройства"
-                      value={profile.devices}
-                      isOwner={isOwner}
-                      name="devices"
-                    />
-                    <tr>
-                      <td>
-                        <br />
-                      </td>
-                    </tr>
-                    {isOwner ? (
-                      <tr>
-                        <td></td>
-                        <td>
-                          <button
-                            type="submit"
-                            class="blue"
-                            style="padding:5px 15px;border:0;cursor:pointer"
-                          >
-                            Сохранить профиль
-                          </button>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+                <table>{hasContacts ? <tbody>
+                  <InfoField label="Страна" value={profile.country} />
+                  <InfoField label="Город" value={profile.city} />
+                  <tr><td><br /></td></tr>
+                  <InfoField label="ВК" value={profile.vkUrl} href={profile.vkUrl ? /^https?:\/\//i.test(profile.vkUrl) ? profile.vkUrl : `http://vk.com/${profile.vkUrl}` : undefined} />
+                  <InfoField label="Twitter" value={profile.twitterUrl} href={profile.twitterUrl ? /^https?:\/\//i.test(profile.twitterUrl) ? profile.twitterUrl : `http://twitter.com/${profile.twitterUrl}/` : undefined} />
+                  <InfoField label="Skype" value={profile.skype} />
+                  <InfoField label="Устройства" value={profile.devices} />
+                  <tr><td><br /></td></tr>
+                </tbody> : null}</table>
               </td>
             </tr>
-          </tbody>
-        </table>
+          </tbody></table>
+        </div>
       </div>
-      </form>
-      {isOwner ? <FediversePanel username={profile.username} following={following} /> : null}
+      {isOwner ? <div class="text12"><a href={`/users/${handle}/settings`}>Настройки профиля</a></div> : null}
+      {isOwner ? <FediversePanel username={handle} following={following} /> : null}
     </div>
   );
 };

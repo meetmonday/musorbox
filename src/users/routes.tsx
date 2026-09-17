@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { deleteCookie } from "hono/cookie";
+import { changePassword } from "../auth/service";
 import { config } from "../core/config";
 import type { UserContext } from "../core/middleware";
 import { layoutWithSidebar } from "../layout/layout";
@@ -10,7 +12,8 @@ import {
   getTopicsByAuthor,
   updateUserProfile,
 } from "./service";
-import { ProfilePage } from "./components";
+import type { ProfileInput, UserProfile } from "./service";
+import { ProfilePage, SettingsPage } from "./components";
 import { ThreadList } from "../forum/components";
 import { Pagination } from "../topics/components";
 import { RecentDiscussions, NewOnSite, HotTopics, SidebarAd } from "../sidebar/components";
@@ -72,37 +75,56 @@ async function handleProfile(c: AppContext) {
   return c.html(`<!DOCTYPE html>${html}`);
 }
 
-async function handleProfileEdit(c: AppContext) {
+async function renderSettings(c: AppContext, profile: UserProfile, opts: { values?: ProfileInput; error?: string; saved?: boolean } = {}) {
+  const html = await layoutWithSidebar({
+    title: `Настройки профиля — ${config.siteName}`,
+    user: c.get("user") ?? null,
+    sidebar: await renderSidebar(),
+    children: <SettingsPage profile={profile} {...opts} />,
+  });
+  return c.html(`<!DOCTYPE html>${html}`);
+}
+
+async function handleSettings(c: AppContext) {
+  const current = c.get("user");
+  if (!current) return c.redirect("/login");
   const username = c.req.param("username") as string;
   const profile = await getUserByUsername(username);
   if (!profile) return c.notFound();
-
-  const current = c.get("user") ?? null;
-  const isOwner = current?.id === profile.id;
-  const isStaff = current && (current.role === "editor" || current.role === "admin");
-  if (!isOwner && !isStaff) {
-    return c.redirect(`/users/${username}/`);
-  }
+  if (current.id !== profile.id) return c.text("Настройки доступны только владельцу профиля.", 403);
+  if (c.req.method === "GET") return renderSettings(c, profile, { saved: c.req.query("saved") === "1" });
 
   const body = await c.req.parseBody();
-  const edit = body["edit_profile"];
-  if (edit !== "1") return c.redirect(`/users/${username}/`);
-
-  const str = (v: unknown) => (typeof v === "string" ? v : undefined);
-  await updateUserProfile(username, {
-    fullName: str(body["full_name"]) ?? str(body["fullname"]),
-    country: str(body["country"]),
-    city: str(body["city"]),
-    vkUrl: str(body["vk"]),
-    twitterUrl: str(body["twitter"]),
-    skype: str(body["skype"]),
-    devices: str(body["devices"]),
-  });
-  return c.redirect(`/users/${username}/`);
+  const str = (name: string) => typeof body[name] === "string" ? body[name] as string : "";
+  if (str("action") === "password") {
+    if (str("new_password") !== str("repeat_password")) {
+      return renderSettings(c, profile, { error: "Новый пароль и его повтор не совпадают." });
+    }
+    const result = await changePassword(current.id, str("current_password"), str("new_password"));
+    if (!result.ok) return renderSettings(c, profile, { error: result.error });
+    deleteCookie(c, "session_token", { path: "/" });
+    return c.redirect("/login?password_changed=1");
+  }
+  if (str("action") !== "profile") return renderSettings(c, profile, { error: "Неизвестное действие." });
+  const values: ProfileInput = {
+    fullName: str("full_name"),
+    country: str("country"),
+    city: str("city"),
+    vkUrl: str("vk"),
+    twitterUrl: str("twitter"),
+    skype: str("skype"),
+    devices: str("devices"),
+    avatarUrl: str("avatar_url"),
+    ratingOptout: str("rating_optout") === "1",
+  };
+  const result = await updateUserProfile(username, values);
+  if (!result.ok) return renderSettings(c, profile, { values, error: result.error });
+  return c.redirect(`/users/${username}/settings?saved=1`);
 }
 
 app.get("/users/:username", handleProfile);
-app.post("/users/:username", handleProfileEdit);
+app.get("/users/:username/settings", handleSettings);
+app.post("/users/:username/settings", handleSettings);
 app.get("/user_topics/:username", getTopicsPage);
 app.get("/user_topics/:username/page_topics/:page", getTopicsPage);
 

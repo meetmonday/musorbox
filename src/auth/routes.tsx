@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { setCookie, deleteCookie, getCookie } from "hono/cookie";
 import { config } from "../core/config";
 import type { UserContext } from "../core/middleware";
@@ -11,7 +12,7 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function renderAuthPage(c: any, opts: { action: "login" | "register"; error?: string; user?: string }) {
+async function renderAuthPage(c: Context<{ Variables: UserContext }>, opts: { action: "login" | "register"; error?: string; user?: string; passwordChanged?: boolean }) {
   const user = c.get("user") ?? null;
   const isLogin = opts.action === "login";
   const title = isLogin ? `Вход на сайт — ${config.siteName}` : `Регистрация — ${config.siteName}`;
@@ -22,6 +23,7 @@ async function renderAuthPage(c: any, opts: { action: "login" | "register"; erro
       <div style="padding:40px;max-width:420px">
         <h1 class="h_page_header">{isLogin ? "Вход на сайт" : "Регистрация"}</h1>
         {opts.error ? <div style="color:#EE0000;margin-bottom:10px">{opts.error}</div> : null}
+        {opts.passwordChanged ? <div class="div_block" role="status">Пароль изменён. Войдите с новым паролем.</div> : null}
         <form method="post" action={`/${opts.action}`} id="frm_auth">
           <table class="div_auth_table">
             <tr>
@@ -73,7 +75,7 @@ async function renderAuthPage(c: any, opts: { action: "login" | "register"; erro
   return c.html(`<!DOCTYPE html>${html}`);
 }
 
-app.get("/login", (c) => renderAuthPage(c, { action: "login" }));
+app.get("/login", (c) => renderAuthPage(c, { action: "login", passwordChanged: c.req.query("password_changed") === "1" }));
 
 app.get("/register", (c) => renderAuthPage(c, { action: "register" }));
 

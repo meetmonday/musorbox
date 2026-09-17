@@ -1,12 +1,9 @@
 import { getDrizzle } from "../core/db";
-import { users, topics, comments, categories, firms, sessions } from "../core/schema";
+import { users, topics, comments, categories } from "../core/schema";
 import { and, eq, sql, desc, count } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { notifyProfileUpdated } from "../activitypub/notify";
 import type { TopicListItem } from "../topics/service";
 import { mapTopicRow, attachTags, topicSelect } from "../topics/service";
-import { changePassword } from "../auth/service";
 
 export type UserProfile = {
   id: number;
@@ -248,108 +245,60 @@ export async function getTopicsByAuthor(
   return { items, total: totalR[0]?.n ?? 0 };
 }
 
-export async function updateUserProfile(
-  username: string,
-  data: {
-    fullName?: string;
-    country?: string;
-    city?: string;
-    vkUrl?: string;
-    twitterUrl?: string;
-    skype?: string;
-    devices?: string;
-  },
-): Promise<boolean> {
-  const db = getDrizzle();
-  const user = await db.query.users.findFirst({ where: eq(users.username, username) });
-  if (!user) return false;
-  await db
-    .update(users)
-    .set({
-      fullName: data.fullName?.trim() || null,
-      country: data.country?.trim() || null,
-      city: data.city?.trim() || null,
-      vkUrl: data.vkUrl?.trim() || null,
-      twitterUrl: data.twitterUrl?.trim() || null,
-      skype: data.skype?.trim() || null,
-      devices: data.devices?.trim() || null,
-    })
-    .where(eq(users.id, user.id));
-  void notifyProfileUpdated(user.id);
-  return true;
-}
-
-export async function listFirms(): Promise<{ id: number; name: string }[]> {
-  const db = getDrizzle();
-  return db.select({ id: firms.id, name: firms.name }).from(firms).orderBy(firms.name);
-}
-
-export async function getSettingsState(userId: number): Promise<SettingsState | null> {
-  const db = getDrizzle();
-  const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  if (!row) return null;
-  return {
-    ratingOptout: row.ratingOptout,
-    deviceFirmId: await getDeviceFirmId(row.id),
-    avatarUrl: row.avatarUrl,
-  };
-}
-
-async function getDeviceFirmId(userId: number): Promise<number | null> {
-  const db = getDrizzle();
-  const token = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  void token;
-  return null;
-}
-
-export type SettingsState = {
+export type ProfileInput = {
+  fullName: string;
+  country: string;
+  city: string;
+  vkUrl: string;
+  twitterUrl: string;
+  skype: string;
+  devices: string;
+  avatarUrl: string;
   ratingOptout: boolean;
-  deviceFirmId: number | null;
-  avatarUrl: string | null;
 };
 
 export type SaveSettingsResult =
   | { ok: true }
   | { ok: false; error: string; field?: string };
 
-export async function saveSettings(
-  userId: number,
-  data: { ratingOptout: boolean; deviceFirmId: number | null },
+export async function updateUserProfile(
+  username: string,
+  data: ProfileInput,
 ): Promise<SaveSettingsResult> {
-  const db = getDrizzle();
-  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  if (!user) return { ok: false, error: "Пользователь не найден." };
-  if (data.deviceFirmId !== null) {
-    const firm = await db.query.firms.findFirst({ where: eq(firms.id, data.deviceFirmId) });
-    if (!firm) return { ok: false, error: "Указан неизвестный производитель устройства.", field: "device_firm" };
+  const limits = { fullName: 100, country: 100, city: 100, vkUrl: 500, twitterUrl: 500, skype: 100, devices: 1000, avatarUrl: 2000 };
+  for (const [field, limit] of Object.entries(limits)) {
+    if (data[field as keyof typeof limits].trim().length > limit) {
+      return { ok: false, error: `Значение поля слишком длинное (не более ${limit} символов).`, field };
+    }
   }
+  const avatarUrl = data.avatarUrl.trim();
+  if (avatarUrl && !/^\/(?!\/)/.test(avatarUrl)) {
+    try {
+      const url = new URL(avatarUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
+    } catch {
+      return { ok: false, error: "Укажите адрес аватара по HTTP или HTTPS либо путь на сайте.", field: "avatarUrl" };
+    }
+  }
+  const db = getDrizzle();
+  const user = await db.query.users.findFirst({ where: eq(users.username, username) });
+  if (!user) return { ok: false, error: "Пользователь не найден." };
   await db
     .update(users)
-    .set({ ratingOptout: data.ratingOptout, devices: null })
-    .where(eq(users.id, userId));
+    .set({
+      fullName: data.fullName.trim() || null,
+      country: data.country.trim() || null,
+      city: data.city.trim() || null,
+      vkUrl: data.vkUrl.trim() || null,
+      twitterUrl: data.twitterUrl.trim() || null,
+      skype: data.skype.trim() || null,
+      devices: data.devices.trim() || null,
+      avatarUrl: avatarUrl || null,
+      ratingOptout: data.ratingOptout,
+    })
+    .where(eq(users.id, user.id));
+  void notifyProfileUpdated(user.id);
   return { ok: true };
 }
 
-export async function saveAvatar(userId: number, filename: string): Promise<void> {
-  const db = getDrizzle();
-  await db.update(users).set({ avatarUrl: `/avatars/${filename}` }).where(eq(users.id, userId));
-}
 
-export async function deleteSessionsFor(userId: number): Promise<number> {
-  const db = getDrizzle();
-  const deleted = await db
-    .delete(sessions)
-    .where(eq(sessions.userId, userId))
-    .returning({ token: sessions.token });
-  return deleted.length;
-}
-
-export async function changePasswordAndDropSessions(
-  userId: number,
-  currentPassword: string,
-  newPassword: string,
-): Promise<SaveSettingsResult> {
-  const result = await changePassword(userId, currentPassword, newPassword);
-  if (!result.ok) return { ok: false, error: result.error, field: "current_password" };
-  return { ok: true };
-}
