@@ -68,7 +68,7 @@ export const SearchForm: FC = () => (
 
 export const LogoMenu: FC = () => (
   <>
-    <div class="div_table">
+    <div class="div_table div_logo_menu">
       <div class="div_row">
         <div class="div_cell">
           <LogoHeader />
@@ -185,7 +185,7 @@ export const Header: FC<{ user: LayoutUser }> = ({ user }) => (
                         class="img_userbar_down"
                         alt="Вниз"
                         title="Вниз"
-                        onclick="return false;"
+                        onclick="window.scrollBy(0, window.innerHeight - 45); return false;"
                       />
                     </div>
                     <div class="div_cell adh1">
@@ -209,13 +209,17 @@ export const Header: FC<{ user: LayoutUser }> = ({ user }) => (
                       )}
                     </div>
                     <div class="div_cell adh0 adhs1" id="div_profile_button">
-                      <img
-                        src="/images/blank.gif"
-                        class="img_userbar_profile"
-                        alt="Профиль"
-                        title="Профиль"
-                        onclick="return false;"
-                      />
+                      <a
+                        href={user ? `/users/${user.username}/` : "/login"}
+                        class="a_userbar_button"
+                        title={user ? "Профиль" : "Войти на сайт"}
+                      >
+                        <img
+                          src="/images/blank.gif"
+                          class="img_userbar_profile"
+                          alt={user ? "Профиль" : "Войти на сайт"}
+                        />
+                      </a>
                     </div>
                     <div id="div_top_search1" class="div_cell adh2">
                       <SearchForm />
