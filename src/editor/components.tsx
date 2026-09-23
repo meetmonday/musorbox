@@ -29,6 +29,76 @@ const EDITOR_OPTIONS = JSON.stringify({
   cut: true,
 });
 
+/**
+ * Bredacture Lite — по документации (https://emacho.ru/bredacture/) урезанная
+ * версия редактора, предназначенная для написания комментариев.
+ */
+export const COMMENT_EDITOR_ID = "comment";
+
+const COMMENT_EDITOR_OPTIONS = JSON.stringify({
+  b: true,
+  i: true,
+  s: true,
+  ul: true,
+  ol: true,
+  blockquote: true,
+  link: true,
+  unlink: true,
+});
+
+const commentEditorInitJS = `window.COMMENT_EDITOR_OPTIONS = ${COMMENT_EDITOR_OPTIONS};
+window.initCommentEditor = function (id, value) {
+  if (typeof Bredacture__lite !== "function") return false;
+  id = String(id).replace(/[^A-Za-z0-9_]/g, "");
+  var host = document.getElementById("lite_" + id);
+  if (!host) return false;
+  Bredacture__lite(id, value || "", window.COMMENT_EDITOR_OPTIONS, "auto");
+  return true;
+};
+window.commentEditorValue = function (form, id) {
+  id = String(id).replace(/[^A-Za-z0-9_]/g, "");
+  var ed = window.e_lite ? window.e_lite[id] : null;
+  var field = document.getElementById("input_html_" + id);
+  if (!ed || !field || (form && !form.contains(field))) return null;
+  try { ed.fix_value(); } catch (e) {}
+  return field.value;
+};`;
+
+// tr-editor.css переопределяет .div_new_comment в белую панель с тенью — в оригинале этот
+// класс и оборачивает обычную ссылку «Ответить». Панель оставляем только для контейнера
+// с открытой формой (класс div_new_comment_open переключает app.js).
+const commentEditorStyles = `
+.div_new_comment {
+  margin: 3px 0 0;
+  padding-bottom: 3px;
+  width: auto;
+  min-width: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.div_new_comment_open {
+  margin: 3px 0 0 5px;
+  padding-bottom: 10px;
+  width: 100%;
+  min-width: 275px;
+  background: #fff;
+  box-shadow: 0 0 20px 0 rgba(0, 0, 0, 0.5);
+}
+.div_new_comment_open a.a_reply {
+  display: none;
+}
+`;
+
+/** Стили + скрипт Lite-редактора и хелперы initCommentEditor/commentEditorValue. */
+export const commentEditorHead = (
+  <>
+    <link rel="stylesheet" href="/Bredacture/tr-editor.css" />
+    <style dangerouslySetInnerHTML={{ __html: commentEditorStyles }} />
+    <script src="/Bredacture/editor-lite_21_mini_.js"></script>
+    <script dangerouslySetInnerHTML={{ __html: commentEditorInitJS }} />
+  </>
+);
+
 export type NewTopicFormProps = {
   categories: EditableCategory[];
   os: TagGroup[];

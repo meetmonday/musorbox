@@ -1,6 +1,7 @@
 import type { FC } from "hono/jsx";
 import type { TopicComment } from "./service";
-import { formatDate } from "../core/utils";
+import { formatDate, sanitizeHtml } from "../core/utils";
+import { COMMENT_EDITOR_ID } from "../editor/components";
 
 const CommentTop: FC<{ comment: TopicComment; showDelete?: boolean; showEdit?: boolean; showHide?: boolean }> = ({ comment, showDelete, showEdit, showHide }) => {
   const score = comment.votesUp - comment.votesDown;
@@ -103,7 +104,13 @@ const CommentTop: FC<{ comment: TopicComment; showDelete?: boolean; showEdit?: b
 
 const ReplyLink: FC<{ commentId: number }> = ({ commentId }) => (
   <div id={`div_new_comment_${commentId}`} class="div_new_comment clear">
-    <a href="#" onclick={`show_add_comment_form(${commentId}); return false;`}>Ответить</a>
+    <a
+      href="#"
+      class="a_reply"
+      onclick={`show_add_comment_form(${commentId}); return false;`}
+    >
+      Ответить
+    </a>
   </div>
 );
 
@@ -122,7 +129,7 @@ const CommentNode: FC<{
     <div id={`div_comment_${comment.id}`} class="div_comment">
       <CommentTop comment={comment} showDelete={canDeleteThis && childrenComments.length === 0} showEdit={canEditThis} showHide={canModerate} />
       <div class="div_content_comm" id={`div_content_comm_${comment.id}`}>
-        <div class="div_text" dangerouslySetInnerHTML={{ __html: comment.body }} />
+        <div class="div_text" dangerouslySetInnerHTML={{ __html: sanitizeHtml(comment.body) }} />
         <ReplyLink commentId={comment.id} />
         {childrenComments.map((c) => (
           <CommentNode
@@ -152,7 +159,7 @@ export const CommentFragment: FC<{
     <div id={`div_comment_${comment.id}`} class="div_comment">
       <CommentTop comment={comment} showDelete={canDeleteThis} showEdit={canEditThis} showHide={canModerate} />
       <div class="div_content_comm" id={`div_content_comm_${comment.id}`}>
-        <div class="div_text" dangerouslySetInnerHTML={{ __html: comment.body }} />
+        <div class="div_text" dangerouslySetInnerHTML={{ __html: sanitizeHtml(comment.body) }} />
         <ReplyLink commentId={comment.id} />
       </div>
     </div>
@@ -202,13 +209,36 @@ export const CommentList: FC<{
   );
 };
 
+// Инициализация Lite-редактора; если скрипт редактора недоступен (public/ — не в репозитории),
+// на его место подставляется обычная textarea с именем body.
+const commentFormInitJS = `(function () {
+  var host = document.getElementById('lite_${COMMENT_EDITOR_ID}');
+  if (!host) return;
+  var form = document.getElementById('frm_new_comment');
+  if (window.initCommentEditor && initCommentEditor('${COMMENT_EDITOR_ID}', '')) {
+    if (form) form.onsubmit = function () {
+      if (window.commentEditorValue) commentEditorValue(form, '${COMMENT_EDITOR_ID}');
+      return true;
+    };
+    return;
+  }
+  var ta = document.createElement('textarea');
+  ta.name = 'body';
+  ta.rows = 5;
+  ta.placeholder = 'Ваш комментарий...';
+  ta.style.width = '98%';
+  ta.style.fontSize = '1.3em';
+  ta.style.fontFamily = 'inherit';
+  host.parentNode.replaceChild(ta, host);
+})();`;
+
 export const CommentForm: FC<{ topicId: number; loggedIn: boolean }> = ({
   topicId,
   loggedIn,
 }) => (
   <div id="div_comment_0">
     <div class="div_content_comm" id="div_content_comm_0"></div>
-    <div id="div_new_comment_0">
+    <div id="div_new_comment_0" class="div_new_comment">
       <br />
       <h3 class="h_left_header">
         <a href="#" onclick="show_add_comment_form(0); return false;">Добавить комментарий</a>
@@ -229,17 +259,20 @@ export const CommentForm: FC<{ topicId: number; loggedIn: boolean }> = ({
           style="display:none"
         >
           <input type="hidden" name="parent_id" value="0" />
-          <textarea
-            name="body"
-            rows={5}
-            style="width:98%;font-size:1.3em;font-family:inherit"
-            placeholder="Ваш комментарий..."
-          />
+          <div id={`lite_${COMMENT_EDITOR_ID}`} style="width:100%" />
           <div style="margin-top:5px">
             <button type="submit" class="blue" style="padding:5px 15px;border:0;cursor:pointer">
               Отправить
             </button>
+            <button
+              type="button"
+              style="background:none;border:0;border-bottom:1px dashed #1fb6f2;padding:5px 10px;cursor:pointer;font-size:1em;color:#1fb6f2"
+              onclick="cancel_comment_form();"
+            >
+              Отменить
+            </button>
           </div>
+          <script dangerouslySetInnerHTML={{ __html: commentFormInitJS }} />
         </form>
       ) : (
         <div class="div_add_comment_noparent">

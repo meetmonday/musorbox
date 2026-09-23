@@ -28,7 +28,7 @@ import { CommentFragment, CommentList, CommentForm } from "../comments/component
 import { getComments, addComment, getCommentById, getCommentChildrenCount, deleteComment, updateComment } from "../comments/service";
 import { deleteTopic, updateTopic } from "./service";
 import { isStaff } from "../core/middleware";
-import { NewTopicForm, editorHead, CONTENT_FIELD } from "../editor/components";
+import { NewTopicForm, editorHead, CONTENT_FIELD, commentEditorHead } from "../editor/components";
 import { getForumTags } from "../forum/service";
 import { getEditableCategories } from "./service";
 import { slugify, sanitizeHtml, stripTags, firstImageSrc } from "../core/utils";
@@ -216,7 +216,10 @@ app.get("/topics/:id/:slug", async (c) => {
     currentSection: topic.categorySlug,
     sidebar,
     head: (
-      <link rel="alternate" type="application/activity+json" href={`/topics/${id}/${slug}`} />
+      <>
+        <link rel="alternate" type="application/activity+json" href={`/topics/${id}/${slug}`} />
+        {me ? commentEditorHead : null}
+      </>
     ),
     children: (
       <div>
@@ -267,9 +270,12 @@ async function postComment(c: any, user: any, parentId: number | null) {
   const id = Number(c.req.param("id")) || 0;
   const topic = await getTopicBySlug(id);
   if (!topic) return c.notFound();
-  const body = await c.req.parseBody();
-  const text = String(body.body ?? "").trim().slice(0, 4000);
-  if (!text) {
+  const form = await c.req.parseBody();
+  // Тело комментария приходит из визуального редактора как HTML — обязательно санитайзим,
+  // иначе это stored XSS (в отличие от edit_comment, здесь санитайза не было).
+  const raw = String(form.body ?? form[CONTENT_FIELD] ?? "").trim().slice(0, 4000);
+  const text = sanitizeHtml(raw);
+  if (!text || (!stripTags(text) && !firstImageSrc(text))) {
     if (xhr) return c.json({ ok: false, error: "empty" });
     return c.redirect(`/topics/${id}/${topic.slug}`);
   }
@@ -408,9 +414,10 @@ app.post("/topics/:id/edit_comment/:commentId", async (c) => {
   if (!comment || comment.topicId !== id) return c.notFound();
   if (comment.authorId !== user.id) return c.text("Forbidden", 403);
   const form = await c.req.parseBody();
-  const text = String(form.body ?? "").trim().slice(0, 4000);
-  if (!text) return c.json({ ok: false, error: "empty" });
-  const updated = await updateComment(commentId, sanitizeHtml(text));
+  const raw = String(form.body ?? form[CONTENT_FIELD] ?? "").trim().slice(0, 4000);
+  const text = sanitizeHtml(raw);
+  if (!text || (!stripTags(text) && !firstImageSrc(text))) return c.json({ ok: false, error: "empty" });
+  const updated = await updateComment(commentId, text);
   if (!updated) return c.text("Forbidden", 403);
   if (xhr) {
     const fresh = await getCommentById(commentId);
