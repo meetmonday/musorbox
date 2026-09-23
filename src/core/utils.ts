@@ -161,10 +161,43 @@ export function voteBarWidths(up: number, down: number, total: number = 120): { 
   };
 }
 
+/**
+ * Режет текст по бюджету так, чтобы не разорвать суррогатную пару (половинку
+ * эмодзи), HTML-сущность вида `&nbsp;` и — там, где граница есть в разумной
+ * зоне — само слово.
+ */
+function sliceText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  let end = maxLength;
+
+  // Половинка суррогатной пары не должна попасть в вывод.
+  const prev = text.charCodeAt(end - 1);
+  if (prev >= 0xd800 && prev <= 0xdbff) end -= 1;
+
+  // Не режем посередине сущности: `&` без `;` до точки обрезки — это начало
+  // незаконченной сущности (или вовсе не сущность, если после `&` не буква/цифра).
+  const amp = text.lastIndexOf("&", end - 1);
+  if (amp >= 0 && /[#a-z0-9]/i.test(text[amp + 1] ?? "")) {
+    const semi = text.indexOf(";", amp);
+    if (semi < 0 || semi >= end) end = amp;
+  }
+
+  // Предпочитаем границу слова, если она близко к точке обрезки.
+  let ws = end;
+  while (ws > 0) {
+    const c = text.charCodeAt(ws - 1);
+    if (c === 32 || c === 9 || c === 10 || c === 12 || c === 13 || c === 160) break;
+    ws -= 1;
+  }
+  if (ws > 0 && ws >= Math.floor(end * 0.6)) end = ws;
+
+  return text.slice(0, end).trimEnd();
+}
+
 export function excerpt(html: string, maxLength: number = 300): string {
   const text = html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
   if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength).trimEnd() + "…";
+  return sliceText(text, maxLength) + "…";
 }
 
 const allowedBodyTags = new Set([
@@ -283,36 +316,51 @@ export function stripTags(html: string): string {
   return html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 }
 
-export function htmlExcerpt(html: string, maxLength: number): string {
+export type HtmlExcerpt = { html: string; truncated: boolean };
+
+const excerptVoidTags = new Set(["img", "br", "hr"]);
+const excerptTagRe = /^<\s*(\/?)\s*([a-z0-9]+)[^>]*>$/i;
+
+/**
+ * Анонс HTML-текста с бюджетом по символам *текста* (теги в бюджет не входят).
+ *
+ * Все открытые элементы (и блочные, и строчные) складываются в стек и в
+ * конце закрываются — даже если обрезка попала внутрь `<b>`/`<a>`/`<span>`,
+ * иначе незакрытый тег вылезет за пределы анонса и поломает стилизацию
+ * остальной страницы. Пустые элементы (без текста) выбрасываются целиком.
+ */
+export function htmlExcerpt(html: string, maxLength: number): HtmlExcerpt {
   const safe = sanitizeHtml(html);
-  const blockTags = new Set(["div", "p", "blockquote", "center", "td", "tr", "table", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6"]);
-  const voidTags = new Set(["img", "br", "hr"]);
   const chunks: string[] = [];
   const stack: { name: string; textBefore: number; chunkIndex: number }[] = [];
   let textLen = 0;
   let truncated = false;
+
+  const closeEntry = (entry: { name: string; textBefore: number; chunkIndex: number }) => {
+    if (textLen === entry.textBefore) chunks[entry.chunkIndex] = "";
+    else chunks.push(`</${entry.name}>`);
+  };
+
   for (const token of safe.match(/<[^>]+>|[^<]+/g) ?? []) {
     if (token[0] === "<") {
-      const m = /^<\s*(\/?)\s*([a-z0-9]+)[^>]*>$/i.exec(token);
+      const m = excerptTagRe.exec(token);
       if (!m) continue;
       const closing = !!m[1];
       const name = (m[2] ?? "").toLowerCase();
       if (closing) {
         const idx = stack.findLastIndex((e) => e.name === name);
-        if (idx >= 0) {
-          const entry = stack[idx]!;
-          const isEmpty = textLen === entry.textBefore;
-          stack.splice(idx);
-          if (!isEmpty) chunks.push(token);
-          else chunks[entry.chunkIndex] = "";
-        } else {
-          chunks.push(token);
-        }
-      } else if (voidTags.has(name)) {
-        if (name === "br" || name === "hr") chunks.push(token);
+        // Закрывающая скобка без пары не выводится — она сломала бы баланс.
+        if (idx < 0) continue;
+        // Сначала закрываем вложенные элементы, затем сам найденный.
+        for (let i = stack.length - 1; i > idx; i--) closeEntry(stack[i]!);
+        closeEntry(stack[idx]!);
+        stack.length = idx;
+      } else if (excerptVoidTags.has(name)) {
+        // Картинка в анонс не попадает — карточка выводит её отдельно выше.
+        if (name !== "img") chunks.push(token);
       } else {
         chunks.push(token);
-        if (blockTags.has(name)) stack.push({ name, textBefore: textLen, chunkIndex: chunks.length - 1 });
+        stack.push({ name, textBefore: textLen, chunkIndex: chunks.length - 1 });
       }
       continue;
     }
@@ -320,15 +368,24 @@ export function htmlExcerpt(html: string, maxLength: number): string {
     if (token.length <= remaining) {
       chunks.push(token);
       textLen += token.length;
-    } else {
-      if (remaining > 0) chunks.push(token.slice(0, remaining));
-      truncated = true;
-      break;
+      continue;
     }
+    if (remaining > 0) {
+      const part = sliceText(token, remaining);
+      if (part) {
+        chunks.push(part);
+        textLen += part.length;
+      }
+    }
+    truncated = true;
+    break;
   }
-  for (let i = stack.length - 1; i >= 0; i--) chunks.push(`</${stack[i]!.name}>`);
-  const out = chunks.join("");
-  return truncated ? out + "…" : out;
+
+  // Закрываем всё, что осталось открытым (в т.ч. незакрытое в исходнике).
+  while (stack.length) closeEntry(stack.pop()!);
+
+  const out = chunks.join("").trimEnd();
+  return { html: truncated ? `${out}…` : out, truncated };
 }
 
 export function firstImageSrc(html: string): string | null {

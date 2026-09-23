@@ -31,7 +31,7 @@ import { isStaff } from "../core/middleware";
 import { NewTopicForm, editorHead, CONTENT_FIELD, commentEditorHead } from "../editor/components";
 import { getForumTags } from "../forum/service";
 import { getEditableCategories } from "./service";
-import { slugify, sanitizeHtml, stripTags, firstImageSrc } from "../core/utils";
+import { slugify, sanitizeHtml, stripTags, firstImageSrc, excerpt } from "../core/utils";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
@@ -211,7 +211,7 @@ app.get("/topics/:id/:slug", async (c) => {
   const hiddenVisible = Boolean(me && (topic.authorId === me.id || isStaff(me)));
   const html = await layoutWithSidebar({
     title: `${topic.title} — ${config.siteName}`,
-    description: topic.body.replace(/<[^>]*>/g, "").slice(0, 160),
+    description: excerpt(topic.body, 160),
     user: c.get("user") ?? null,
     currentSection: topic.categorySlug,
     sidebar,

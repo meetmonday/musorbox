@@ -1,5 +1,5 @@
 import type { FC } from "hono/jsx";
-import { formatDate, replyCountText, voteBarWidths, htmlExcerpt, firstImageSrc, stripTags } from "../core/utils";
+import { formatDate, replyCountText, voteBarWidths, htmlExcerpt, firstImageSrc } from "../core/utils";
 import type { TopicListItem, TopicDetail, LeaderboardEntry } from "./service";
 
 export function topicUrl(t: TopicListItem | TopicDetail): string {
@@ -97,8 +97,10 @@ export const DiscussButton: FC<{ count: number; href: string }> = ({ count, href
   </a>
 );
 
-export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
-  <div class="div_topic" id={`div_topic_${topic.id}`}>
+export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => {
+  const excerpt = htmlExcerpt(topic.body, 220);
+  return (
+    <div class="div_topic" id={`div_topic_${topic.id}`}>
     <table cellpadding="0" cellspacing="0">
       <tr>
         <td class="td1">
@@ -152,8 +154,8 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
           </div>
         ) : null}
       </div>
-      <div dangerouslySetInnerHTML={{ __html: htmlExcerpt(topic.body, 220) }} />
-      {stripTags(topic.body).length > 220 ? (
+      <div dangerouslySetInnerHTML={{ __html: excerpt.html }} />
+      {excerpt.truncated ? (
         <a href={topicUrl(topic)} class="dark2" style="font-size:1.2em">
           Читать дальше →
         </a>
@@ -176,8 +178,9 @@ export const TopicCard: FC<{ topic: TopicListItem }> = ({ topic }) => (
     </table>
     <div class="div_bookmarks" id={`div_bookmarks_${topic.id}`}> </div>
     <br class="clear" />
-  </div>
-);
+    </div>
+  );
+};
 
 export const FeaturedCarousel: FC<{ items: TopicListItem[] }> = ({ items }) => (
   <noindex>
