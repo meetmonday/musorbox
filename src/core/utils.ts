@@ -237,6 +237,10 @@ export function sanitizeHtml(input: string): string {
   html = html.replace(/<!--[\s\S]*?-->/g, "");
   html = html.replace(/<\?[\s\S]*?\?>/g, "");
   html = html.replace(/<![a-z][^>]*>/gi, "");
+  // Важно: удаляем запрещённые элементы вместе с содержимым ДО того, как generic-проход
+  // ниже срежет их открывающие теги — иначе пара не матчится и текст скрипта
+  // (или содержимое style/form/textarea) оседает в теле как обычный текст.
+  html = html.replace(/<(script|style|iframe|object|embed|form|input|textarea)[^>]*>[\s\S]*?<\/\1>/gi, "");
 
   html = html.replace(/<([a-zA-Z][a-zA-Z0-9]*)(\s[^>]*)?(\/?)>/g, (match, nameRaw, attrsRaw, selfClose) => {
     const name = nameRaw.toLowerCase();
@@ -272,7 +276,6 @@ export function sanitizeHtml(input: string): string {
     return `<${name} ${attrs.join(" ")}${close}>`;
   });
 
-  html = html.replace(/<(script|style|iframe|object|embed|form|input|textarea)[^>]*>[\s\S]*?<\/\1>/gi, "");
   return html;
 }
 
