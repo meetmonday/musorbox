@@ -32,6 +32,8 @@ import { NewTopicForm, editorHead, CONTENT_FIELD, commentEditorHead } from "../e
 import { getForumTags } from "../forum/service";
 import { getEditableCategories } from "./service";
 import { slugify, sanitizeHtml, stripTags, firstImageSrc, excerpt } from "../core/utils";
+import { telegramInfoForTopic } from "../telegram/service";
+import { TelegramTopicLink } from "../telegram/components";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
@@ -207,7 +209,11 @@ app.get("/topics/:id/:slug", async (c) => {
   const currentUserId = me?.id ?? null;
   if (topic.hidden && !(me && (topic.authorId === me.id || isStaff(me)))) return c.notFound();
 
-  const [sidebar, comments] = await Promise.all([renderSidebar(), getComments(id, Boolean(me && isStaff(me)))]);
+  const [sidebar, comments, telegram] = await Promise.all([
+    renderSidebar(),
+    getComments(id, Boolean(me && isStaff(me))),
+    telegramInfoForTopic(id),
+  ]);
   const hiddenVisible = Boolean(me && (topic.authorId === me.id || isStaff(me)));
   const html = await layoutWithSidebar({
     title: `${topic.title} — ${config.siteName}`,
@@ -224,6 +230,13 @@ app.get("/topics/:id/:slug", async (c) => {
     children: (
       <div>
         <TopicDetailView topic={topic} canDelete={canDeleteTopic} canEdit={canEditTopic} canModerate={canModerate} hiddenVisible={hiddenVisible} />
+        <TelegramTopicLink
+          thread={telegram.thread}
+          configured={telegram.configured}
+          canManage={canDeleteTopic}
+          topicId={topic.id}
+          chatUsername={telegram.chatUsername ?? undefined}
+        />
         <a name="comments" />
         <div id="div_comments_0">
           <CommentList

@@ -3,6 +3,12 @@ import { comments, topics, users, apActors } from "../core/schema";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { notifyComment } from "../notifications/service";
 import { notifyCommentCreated, notifyCommentDeleted } from "../activitypub/notify";
+import {
+  mirrorCommentDeletedToTelegram,
+  mirrorCommentEditedToTelegram,
+  mirrorCommentToTelegram,
+} from "../telegram/mirror";
+import { getCommentLink } from "../telegram/service";
 import { stripLeadingReplyMentions } from "../core/utils";
 
 export type TopicComment = {
@@ -168,6 +174,16 @@ export async function addComment(opts: {
   apUrl?: string | null;
   authorId?: number | null;
   remoteActorId?: number | null;
+  /**
+   * Дублировать комментарий в тему чата Telegram. `false` — когда комментарий
+   * сам пришёл оттуда: иначе получится эхо.
+   */
+  mirrorTelegram?: boolean;
+  /**
+   * Рассылать Create подписанту ActivityPub. `false` — для внешних источников
+   * (Telegram): подписывать их активность ключом сайта нельзя.
+   */
+  federate?: boolean;
 }): Promise<number> {
   const authorId = opts.authorId ?? null;
   const remoteActorId = opts.remoteActorId ?? null;
@@ -193,7 +209,9 @@ export async function addComment(opts: {
     .where(eq(topics.id, opts.topicId));
   const id = ids[0]?.id ?? 0;
   if (id) await notifyComment(id);
-  if (id && !opts.apUrl) void notifyCommentCreated(id, authorId!).catch(() => console.error("Не удалось отправить комментарий в федерацию"));
+  const shouldFederate = opts.federate ?? !opts.apUrl;
+  if (id && shouldFederate) void notifyCommentCreated(id, authorId!).catch(() => console.error("Не удалось отправить комментарий в федерацию"));
+  if (id && opts.mirrorTelegram !== false) mirrorCommentToTelegram(id);
   return id;
 }
 
@@ -213,6 +231,7 @@ export async function updateComment(commentId: number, body: string): Promise<bo
     .set({ body, editedAt: new Date() })
     .where(and(eq(comments.id, commentId), isNull(comments.remoteActorId)))
     .returning({ id: comments.id });
+  if (rows.length > 0) mirrorCommentEditedToTelegram(commentId);
   return rows.length > 0;
 }
 
@@ -223,6 +242,11 @@ export async function deleteComment(commentId: number, topicId: number): Promise
     .from(comments)
     .where(eq(comments.id, commentId))
     .limit(1);
+  // Связь с сообщением чата читаем до удаления: она живёт по внешнему ключу
+  // и вместе со строкой комментария исчезнет.
+  const tgLink = await getCommentLink(commentId);
+  // Сообщение в чате удаляем, пока привязка ещё существует.
+  mirrorCommentDeletedToTelegram(commentId, tgLink);
   await db.delete(comments).where(eq(comments.id, commentId));
   await db
     .update(topics)

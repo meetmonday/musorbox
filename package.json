@@ -25,9 +25,12 @@
     "typescript": "^7"
   },
   "dependencies": {
+    "@gramio/format": "^0.12.1",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.2",
+    "gramio": "^0.15.1",
     "hono": "^4.13.7",
+    "node-html-parser": "^9.0.4",
     "sharp": "^0.35.4"
   }
 }

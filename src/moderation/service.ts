@@ -3,6 +3,7 @@ import { getDrizzle, type Db } from "../core/db";
 import { comments, modLog, notifications, sessions, topics, users } from "../core/schema";
 import { config } from "../core/config";
 import { notifyTopicDeleted, notifyCommentDeleted } from "../activitypub/notify";
+import { mirrorCommentDeletedToTelegram } from "../telegram/mirror";
 
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
@@ -86,6 +87,8 @@ export async function hideComment(moderatorId: number, commentId: number, hidden
     void notifyCommentDeleted(comment.id, comment.topicId, comment.authorId)
       .catch(() => console.error("Не удалось отправить скрытие комментария в федерацию"));
   }
+  // Скрытый комментарий исчезает и из темы чата: сайт здесь источник истины.
+  if (hidden) mirrorCommentDeletedToTelegram(comment.id);
   return true;
 }
 

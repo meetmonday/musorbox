@@ -35,4 +35,17 @@ export const config = {
       .map((h) => h.trim().toLowerCase())
       .filter(Boolean);
   })(),
+  /**
+   * Зеркалирование топиков и комментариев в Telegram-чат с топиками.
+   * Живые настройки (токен бота, ID чата) хранятся в таблице `tg_settings` и
+   * правятся из админки; переменные окружения — только первоначальный старт.
+   */
+  telegram: {
+    /** Базовый адрес Bot API; свой — для локального Bot API сервера. */
+    apiBase: (process.env.TG_API_BASE ?? "https://api.telegram.org").replace(/\/+$/, ""),
+    botToken: process.env.TG_BOT_TOKEN ?? "",
+    chatId: process.env.TG_CHAT_ID ?? "",
+    /** Пауза между сообщениями боту, чтобы не поймать 429 (Telegram: ~20 сообщений в минуту в чат). */
+    sendIntervalMs: Number(process.env.TG_SEND_INTERVAL_MS ?? 1200),
+  },
 };

@@ -27,6 +27,14 @@ Verification is `bun run typecheck` (`tsc --noEmit`) — **there is no test suit
 - Env (`PORT`, `DB_PATH`, `SESSION_SECRET`, `PUBLIC_BASE_URL`, `AP_ALLOW_INSECURE_HOSTS`, ...) is read once at import time in `src/core/config.ts`; changing env after start has no effect.
 - User-facing strings, comments, and log messages are in **Russian**; commit messages are in **English** (`scope: subject`, e.g. `activitypub: ...`).
 
+## Telegram integration (`src/telegram/`)
+
+- Settings (bot token, chat id, webhook secret, mirror toggle) live in the `tg_settings` table and are edited from `/settings/telegram` (staff only); env vars only seed the first start.
+- Outbound (`mirror.ts`): every new topic creates a forum topic via `createForumTopic`; comments/edits/deletes mirror into it. Messages use structured rich messages (`InputRichBlock[]` from `@gramio/format/rich`) — no `parse_mode` — and go out as uploaded files first (multipart + `attach://`; `media.ts` reads site images from disk), then with URLs, then without media, then as plain text. `setTelegramMirrorEnabled(false)` (used by the seed) stops all mirroring.
+- Inbound (`receive.ts`): `POST /telegram/webhook/:token` (secret from settings, rate-limited) turns topic messages into comments authored by shadow profiles (`tg_users` → `users`), preserving reply nesting and images (`media.ts` downloads them into `public/uploads`).
+- Telegram does **not** deliver group message deletions to bots: the site command is replying `/del` to your own message. Deleting a comment on the site (or hiding it as a moderator) removes the chat message.
+- All mirror hooks are fire-and-forget: an API failure never breaks topic creation or comments, and every unhandled rejection in these paths is caught (`withTopicLock` cleans up via `.then(onOk, onErr)`, not `.finally`).
+
 ## Assets & ActivityPub
 
 - `public/` and `dumps/` are gitignored (site assets and archived pages extracted from the original site are not in the repo). A fresh clone runs but is unstyled until assets are placed in `public/`. Don't "fix" this by committing them.

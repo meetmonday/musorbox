@@ -332,3 +332,67 @@ export const apMentions = sqliteTable(
     index("ap_mentions_target_user_idx").on(t.targetLocalUserId),
   ],
 );
+
+/* ─── Telegram tables ─── */
+
+/**
+ * Настройки интеграции с Telegram (пара ключ-значение). Параметры бота меняются
+ * из админки без перезапуска, поэтому лежат в БД, а не в окружении.
+ */
+export const tgSettings = sqliteTable("tg_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull().default(""),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+});
+
+/**
+ * Топик сайта, зеркалируемый темой (topic) в обсуждении Telegram.
+ * Один топик сайта — одна тема чата: topicId здесь первичный ключ.
+ */
+export const tgThreads = sqliteTable(
+  "tg_threads",
+  {
+    topicId: integer("topic_id")
+      .primaryKey()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    chatId: integer("chat_id").notNull(),
+    messageThreadId: integer("message_thread_id").notNull(),
+    threadName: text("thread_name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("tg_threads_chat_thread_idx").on(t.chatId, t.messageThreadId)],
+);
+
+/** Комментарий сайта ↔ сообщение бота в теме чата (обе стороны синхронизации). */
+export const tgComments = sqliteTable(
+  "tg_comments",
+  {
+    commentId: integer("comment_id")
+      .primaryKey()
+      .references(() => comments.id, { onDelete: "cascade" }),
+    chatId: integer("chat_id").notNull(),
+    messageId: integer("message_id").notNull(),
+    tgUserId: integer("tg_user_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("tg_comments_chat_msg_idx").on(t.chatId, t.messageId)],
+);
+
+/**
+ * Участник Telegram ↔ «теневой» пользователь сайта: комментарий требует
+ * локального автора, а логиниться в аккаунт собеседник из чата не должен.
+ */
+export const tgUsers = sqliteTable(
+  "tg_users",
+  {
+    tgUserId: integer("tg_user_id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    username: text("username"),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    linkedAt: integer("linked_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("tg_users_user_idx").on(t.userId)],
+);

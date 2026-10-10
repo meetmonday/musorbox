@@ -3,6 +3,8 @@ import { topics, categories, users, tags, topicTags, comments, apActors } from "
 import { and, desc, eq, inArray, sql, count } from "drizzle-orm";
 import { config } from "../core/config";
 import { notifyTopicCreated, notifyTopicDeleted, notifyTopicUpdated } from "../activitypub/notify";
+import { mirrorTopicDeletedToTelegram, mirrorTopicRenameToTelegram, mirrorTopicToTelegram } from "../telegram/mirror";
+import { getThreadForTopic } from "../telegram/service";
 
 export type TopicListItem = {
   id: number;
@@ -559,12 +561,17 @@ export async function createTopic(input: {
     await db.insert(topicTags).values(input.tagIds.map((tagId) => ({ topicId: id, tagId })));
   }
   void notifyTopicCreated(id, input.authorId);
+  mirrorTopicToTelegram(id);
   return id;
 }
 
 export async function deleteTopic(id: number): Promise<void> {
   const db = getDrizzle();
   const topic = await db.select({ authorId: topics.authorId, slug: topics.slug }).from(topics).where(eq(topics.id, id)).limit(1);
+  // Тему чата удаляем до топика: привязка живёт по внешнему ключу, поэтому
+  // читаем её заранее и передаём в зеркалирование.
+  const tgThread = await getThreadForTopic(id);
+  mirrorTopicDeletedToTelegram(id, tgThread);
   await db.delete(topics).where(eq(topics.id, id));
   if (topic[0]) {
     const url = topic[0].slug ? `${config.baseUrl}/topics/${id}/${topic[0].slug}` : `${config.baseUrl}/topics/${id}`;
@@ -598,4 +605,5 @@ export async function updateTopic(
     await db.insert(topicTags).values(input.tagIds.map((tagId) => ({ topicId: id, tagId })));
   }
   void notifyTopicUpdated(id);
+  mirrorTopicRenameToTelegram(id);
 }

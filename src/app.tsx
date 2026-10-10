@@ -19,6 +19,7 @@ import notificationsRoutes from "./notifications/routes";
 import moderationRoutes from "./moderation/routes";
 import apiRoutes from "./api/routes";
 import apiSettingsRoutes from "./api/settings";
+import telegramRoutes from "./telegram/routes";
 
 type AppEnv = {
   Variables: UserContext;
@@ -39,6 +40,7 @@ app.use("/uploads/*", serveStatic({ root: "./public" }));
 app.route("/", activityPubRoutes);
 app.route("/", apiRoutes);
 app.route("/", apiSettingsRoutes);
+app.route("/", telegramRoutes);
 app.route("/", topicsRoutes);
 app.route("/", authRoutes);
 app.route("/", forumRoutes);

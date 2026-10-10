@@ -3,6 +3,7 @@ import { users, categories, topics, tags, topicTags, firms, comments, sessions, 
 import { slugify } from "./utils";
 import { hash } from "bcryptjs";
 import { eq } from "drizzle-orm";
+import { setTelegramMirrorEnabled } from "../telegram/mirror";
 
 const seedLeadColors = ["#1FB6F2", "#e67e22", "#27ae60", "#8e44ad", "#c0392b", "#16a085", "#2c3e50"];
 
@@ -69,6 +70,8 @@ export async function seedTags(): Promise<Record<string, number>> {
 
 export async function seed(): Promise<void> {
   console.log("[seed] clearing old data...");
+  // Демо-топики не должны превращаться в темы чата Telegram.
+  setTelegramMirrorEnabled(false);
   await db.delete(topicTags);
   await db.delete(comments);
   await db.delete(votes);
