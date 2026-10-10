@@ -120,7 +120,11 @@ type TelegramBody = string | FormData;
 
 async function callTelegramRaw<T = unknown>(token: string, method: string, body: TelegramBody): Promise<T> {
   const url = `${config.telegram.apiBase}/bot${token}/${method}`;
-  const res = await fetch(url, { method: "POST", body, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  // JSON-строкой без явного Content-Type уходит как text/plain, и Bot API не
+  // разбирает из такого тела параметры: getChat отвечает «chat_id is empty»,
+  // хотя chat_id передан. У формы заголовок с boundary fetch ставит сам.
+  const headers = typeof body === "string" ? { "Content-Type": "application/json" } : undefined;
+  const res = await fetch(url, { method: "POST", body, headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
   const text = await res.text();
   let parsed: TgResponse<T>;
   try {
