@@ -2,7 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getDrizzle } from "../core/db";
 import { categories, comments, topics, tgThreads, users } from "../core/schema";
 import { config } from "../core/config";
-import { excerpt, formatDate } from "../core/utils";
+import { formatDate } from "../core/utils";
 import {
   TelegramApiError,
   createForumTopic,
@@ -16,7 +16,7 @@ import {
   sendRichMessageWithFiles,
   type UploadedFile,
 } from "./client";
-import { htmlToRichBlocks, photoBlocks, richBlocksToPlainText, siteUrlResolver, toInputRichBlocks } from "./format";
+import { htmlToRichBlocks, MAX_BODY_TEXT, photoBlocks, plainText, richBlocksToPlainText, siteUrlResolver, toInputRichBlocks } from "./format";
 import { attachBlockImages } from "./media";
 import { readTelegramSettings, type TelegramSettings } from "./settings";
 import {
@@ -50,8 +50,8 @@ export function setTelegramMirrorEnabled(enabled: boolean): void {
   mirrorEnabled = enabled;
 }
 
-/** Больше десяти картинок в одном сообщении чат не покажет как следует. */
-const MAX_TOPIC_IMAGES = 10;
+/** Больше Telegram в одно сообщение не вложит (предел — 50 вложений). */
+const MAX_TOPIC_IMAGES = 50;
 
 /** Сообщения боту уходят по очереди с паузой — Telegram ограничивает частоту. */
 function enqueue(task: () => Promise<void>): void {
@@ -213,8 +213,12 @@ async function ensureThread(topicId: number, settings: TelegramSettings): Promis
   return thread;
 }
 
-/** Первое сообщение темы: заголовок, картинки топика, анонс и ссылка. */
+/** Первое сообщение темы: заголовок, картинки топика, текст и ссылка. */
 async function sendTopicIntro(thread: TgThread, topic: TopicInfo, settings: TelegramSettings): Promise<void> {
+  // Тело топика разбираем на блоки целиком: заголовки, списки, код, ссылки.
+  // Картинки уже показаны отдельными блоками выше, поэтому в тексте их не
+  // дублируем — иначе одно и то же фото пришло бы дважды.
+  const body = topicBodyBlocks(topic.body);
   const blocks: unknown[] = [
     { type: "heading", size: 2, text: topic.title },
     ...photoBlocks(topic.images),
@@ -222,13 +226,21 @@ async function sendTopicIntro(thread: TgThread, topic: TopicInfo, settings: Tele
       type: "paragraph",
       text: `Автор: ${topic.authorName}${topic.categoryName ? ` · раздел: ${topic.categoryName}` : ""}`,
     },
-    { type: "paragraph", text: excerpt(topic.body, 400) },
+    ...body,
     { type: "buttons", buttons: [{ text: "Читать на сайте", url: topicUrl(topic) }] },
   ];
   const sent = await sendRichOrText(settings, thread.messageThreadId, blocks, {
-    fallbackText: `${topic.title}\n${topic.authorName}\n${excerpt(topic.body, 500)}\n${topicUrl(topic)}\n\nКартинки топика: ${topic.images.join("\n")}`.trim(),
+    fallbackText: richBlocksToPlainText(blocks),
   });
   if (sent) console.log(`[tg] анонс топика ${thread.topicId} отправлен в тему ${thread.messageThreadId} (message_id=${sent})`);
+}
+
+/** Тело топика как блоки сообщения; пустое тело даёт один абзац. */
+function topicBodyBlocks(body: string): unknown[] {
+  const blocks = toInputRichBlocks(htmlToRichBlocks(body ?? "", siteUrlResolver(), { skipPhotos: true, maxText: MAX_BODY_TEXT }));
+  if (blocks.length > 0) return blocks;
+  const text = plainText(body ?? "");
+  return text ? [{ type: "paragraph", text }] : [];
 }
 
 /**
@@ -481,7 +493,7 @@ export async function unlinkTelegramThread(topicId: number): Promise<boolean> {
 
 function commentBlocks(comment: CommentInfo): unknown[] {
   const head = { type: "paragraph", text: `${comment.authorName} · ${formatDate(comment.createdAt)}` };
-  const body = toInputRichBlocks(htmlToRichBlocks(comment.body ?? "", siteUrlResolver()));
+  const body = toInputRichBlocks(htmlToRichBlocks(comment.body ?? "", siteUrlResolver(), { maxText: MAX_BODY_TEXT }));
   const footer = {
     type: "buttons",
     buttons: [{ text: "Ответить на сайте", url: commentUrl(comment) }],

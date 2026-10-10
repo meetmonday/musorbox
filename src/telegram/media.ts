@@ -19,6 +19,8 @@ const MAX_MEDIA_PER_MESSAGE = 10;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 /** Предел заливки фото боту: берём с запасом от лимита Telegram. */
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+/** Суммарный размер одного multipart-запроса (в Telegram до 50 МБ на сообщение). */
+const MAX_UPLOAD_TOTAL_BYTES = 45 * 1024 * 1024;
 const MAX_WIDTH = 800;
 
 type MediaCandidate = { file_id: string; mime: string };
@@ -115,9 +117,14 @@ export async function attachBlockImages(blocks: unknown[]): Promise<{ blocks: un
   const copy = structuredClone(blocks);
   const targets = collectPhotoBlocks(copy);
   const media: UploadedFile[] = [];
+  let totalBytes = 0;
   for (const [index, target] of targets.entries()) {
+    // Один запрос к Bot API не должен стать гигабайтным: остальные картинки
+    // уйдут адресами, а если Telegram их не возьмёт — сработает откат.
+    if (totalBytes > MAX_UPLOAD_TOTAL_BYTES) break;
     const file = await readImageForUpload(target.url, index);
     if (!file) continue;
+    totalBytes += file.bytes.byteLength;
     (target.block.photo as Record<string, unknown>).media = `attach://${file.name}`;
     media.push(file);
   }

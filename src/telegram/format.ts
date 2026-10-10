@@ -16,18 +16,33 @@ import { config } from "../core/config";
 
 /* ── Лимиты «богатого» сообщения ── */
 
-const MAX_BLOCKS = 60;
-const MAX_MEDIA = 10;
-const MAX_TABLE_ROWS = 20;
-const MAX_TABLE_CELLS = 8;
-const MAX_BLOCK_TEXT = 3500;
+/**
+ * Лимиты Telegram на «богатые» сообщения: 32768 символов текста, 500 блоков
+ * (считая вложенные, элементы списков и строки таблиц), 50 вложений, 20
+ * столбцов в таблице. Берём чуть меньше: в сообщении ещё есть служебные блоки —
+ * заголовок темы, строка автора и кнопки.
+ */
+const MAX_TEXT = 32_000;
+/** Сколько текста остаётся телу топика или комментария. */
+export const MAX_BODY_TEXT = 30_000;
+const MAX_BLOCKS = 400;
+const MAX_MEDIA = 50;
+const MAX_TABLE_ROWS = 100;
+const MAX_TABLE_CELLS = 20;
 
 type ResolveUrl = (src: string) => string;
 
+export type RichOptions = {
+  /** Картинки сообщения уже идут отдельными блоками — не повторять их в тексте. */
+  skipPhotos?: boolean;
+  /** Бюджет текста сообщения; по умолчанию — потолок Telegram. */
+  maxText?: number;
+};
+
 const identityUrl: ResolveUrl = (src) => src;
 
-/** Контекст одного преобразования: абсолютные адреса и бюджет вложений. */
-type Ctx = { resolveUrl: ResolveUrl; mediaLeft: number };
+/** Контекст одного преобразования: абсолютные адреса, вложения и бюджет текста. */
+type Ctx = { resolveUrl: ResolveUrl; skipPhotos: boolean; mediaLeft: number; textLeft: number };
 
 /* ── Обход HTML ── */
 
@@ -79,17 +94,36 @@ function tagOf(node: HtmlNode): string {
 }
 
 function clip(text: string): string {
-  const clean = text.replace(/\r/g, "").trim();
-  return clean.length > MAX_BLOCK_TEXT ? `${clean.slice(0, MAX_BLOCK_TEXT)}…` : clean;
+  return text.replace(/\r/g, "").trim();
+}
+
+/**
+ * Текст с проверкой бюджета: Telegram не примет сообщение длиннее 32768
+ * символов, поэтому последний блок получает обрывок, а не вся отправка.
+ * Внутри абзаца пробелы по краям сохраняем — иначе «текст <b>жирный</b> текст»
+ * склеился бы в одно слово.
+ */
+function take(text: string, ctx: Ctx, trim = false): string {
+  if (ctx.textLeft <= 0) return "";
+  const value = trim ? clip(text) : text.replace(/\r/g, "");
+  if (value.length <= ctx.textLeft) {
+    ctx.textLeft -= value.length;
+    return value;
+  }
+  const cut = value.slice(0, ctx.textLeft);
+  ctx.textLeft = 0;
+  return `${cut}…`;
 }
 
 /* ── HTML → структурные блоки ── */
 
-function pushText(runs: StructuredRichInline[], text: string): void {
-  if (!text) return;
+function pushText(runs: StructuredRichInline[], text: string, ctx: Ctx): void {
+  if (!text || ctx.textLeft <= 0) return;
+  const value = take(text, ctx);
+  if (!value) return;
   const last = runs[runs.length - 1];
-  if (typeof last === "string") runs[runs.length - 1] = last + text;
-  else runs.push(text);
+  if (typeof last === "string") runs[runs.length - 1] = last + value;
+  else runs.push(value);
 }
 
 function inlineRuns(nodes: HtmlNode[], ctx: Ctx): StructuredRichInline[] {
@@ -100,7 +134,7 @@ function inlineRuns(nodes: HtmlNode[], ctx: Ctx): StructuredRichInline[] {
 
 function collectInline(node: HtmlNode, runs: StructuredRichInline[], ctx: Ctx): void {
   if (!isElement(node)) {
-    if (node.nodeType === 3) pushText(runs, (node as TextNode).text);
+    if (node.nodeType === 3) pushText(runs, (node as TextNode).text, ctx);
     return;
   }
   const el = node;
@@ -124,22 +158,26 @@ function collectInline(node: HtmlNode, runs: StructuredRichInline[], ctx: Ctx): 
     case "del":
       runs.push(blocks.strikethrough(inlineChildren(el, ctx)));
       return;
-    case "code":
-      runs.push(blocks.code(clip(nodeText(el))));
+    case "code": {
+      const code = take(nodeText(el), ctx, true);
+      if (code) runs.push(blocks.code(code));
       return;
+    }
     case "a": {
       const href = (el.attributes.href ?? "").trim();
       const label = inlineChildren(el, ctx);
       if (href && /^https?:\/\/|^tg:/i.test(href)) runs.push(blocks.url(label || href, href));
-      else if (typeof label === "string") pushText(runs, label);
+      else if (typeof label === "string") pushText(runs, label, ctx);
       else runs.push(label);
       return;
     }
     case "img": {
+      // Картинки уже показаны отдельными блоками — не дублируем их ссылкой.
+      if (ctx.skipPhotos) return;
       const src = ctx.resolveUrl((el.attributes.src ?? "").trim());
       const alt = (el.attributes.alt ?? "").trim();
       if (/^https?:\/\//i.test(src)) runs.push(blocks.url(alt || "картинка", src));
-      else if (alt) pushText(runs, alt);
+      else if (alt) pushText(runs, alt, ctx);
       return;
     }
     case "span":
@@ -154,7 +192,7 @@ function collectInline(node: HtmlNode, runs: StructuredRichInline[], ctx: Ctx): 
       return;
     default:
       if (SKIP_TAGS.has(el.rawTagName.toLowerCase())) return;
-      pushText(runs, nodeText(el));
+      pushText(runs, nodeText(el), ctx);
   }
 }
 
@@ -166,7 +204,7 @@ function inlineChildren(el: HtmlElement, ctx: Ctx): StructuredRichInline {
 }
 
 /** Абзацы: переводы строк внутри превращаем в отдельные блоки. */
-function paragraphs(runs: StructuredRichInline[]): RichBlockNode[] {
+function paragraphs(runs: StructuredRichInline[], ctx: Ctx): RichBlockNode[] {
   const out: RichBlockNode[] = [];
   let current: StructuredRichInline[] = [];
   const flush = () => {
@@ -176,12 +214,12 @@ function paragraphs(runs: StructuredRichInline[]): RichBlockNode[] {
   for (const run of runs) {
     if (typeof run === "string" && run.includes("\n")) {
       const parts = run.split("\n");
-      pushText(current, parts[0]!);
+      pushText(current, parts[0]!, ctx);
       flush();
       for (let i = 1; i < parts.length - 1; i++) {
         if (parts[i]!.trim()) out.push(blocks.paragraph([parts[i]!]));
       }
-      pushText(current, parts[parts.length - 1]!);
+      pushText(current, parts[parts.length - 1]!, ctx);
       continue;
     }
     current.push(run);
@@ -190,13 +228,14 @@ function paragraphs(runs: StructuredRichInline[]): RichBlockNode[] {
   return out;
 }
 
-function textBlocks(text: string): RichBlockNode[] {
+function textBlocks(text: string, ctx: Ctx): RichBlockNode[] {
   if (!text.trim()) return [];
-  return paragraphs([text]);
+  return paragraphs([text], ctx);
 }
 
 /** Фото-блок из `<img>`; при нехватке бюджета или непубичном адресе — ничего. */
 function photoBlock(el: HtmlElement, ctx: Ctx): RichBlockNode[] {
+  if (ctx.skipPhotos) return [];
   const src = ctx.resolveUrl((el.attributes.src ?? "").trim());
   if (!/^https?:\/\//i.test(src) || ctx.mediaLeft <= 0) return [];
   ctx.mediaLeft -= 1;
@@ -211,7 +250,7 @@ function flowsFromNodes(nodes: HtmlNode[], ctx: Ctx): RichBlockNode[] {
   const out: RichBlockNode[] = [];
   let runs: StructuredRichInline[] = [];
   const flush = () => {
-    for (const block of paragraphs(runs)) out.push(block);
+    for (const block of paragraphs(runs, ctx)) out.push(block);
     runs = [];
   };
   for (const node of nodes) {
@@ -242,7 +281,10 @@ function listItemBlocks(el: HtmlElement, ctx: Ctx): StructuredRichBlockInput[] {
   const out: StructuredRichBlockInput[] = [];
   if (runs.length) out.push(blocks.paragraph(runs));
   out.push(...blocksFrom(nestedNodes, ctx));
-  if (out.length === 0) out.push(blocks.paragraph([clip(nodeText(el))]));
+  if (out.length === 0) {
+    const fallback = take(nodeText(el), ctx, true);
+    if (fallback) out.push(blocks.paragraph([fallback]));
+  }
   return out;
 }
 
@@ -261,7 +303,7 @@ function tableBlocks(el: HtmlElement, ctx: Ctx): RichBlockNode[] {
   const collectRow = (tr: HtmlElement) => {
     const cells = tr.childNodes.filter((n) => isElement(n) && n.rawTagName.toLowerCase() !== "br") as HtmlElement[];
     if (cells.length === 0) return;
-    rows.push(cells.slice(0, MAX_TABLE_CELLS).map((cell) => clip(cellText(cell, ctx))));
+    rows.push(cells.slice(0, MAX_TABLE_CELLS).map((cell) => take(cellText(cell, ctx), ctx, true)));
   };
   for (const child of el.childNodes) {
     if (!isElement(child)) continue;
@@ -313,7 +355,7 @@ function blocksFrom(nodes: HtmlNode[], ctx: Ctx): RichBlockNode[] {
   };
   const flush = () => {
     if (pending.length === 0) return;
-    for (const block of paragraphs(inlineRuns(pending, ctx))) add(block);
+    for (const block of paragraphs(inlineRuns(pending, ctx), ctx)) add(block);
     pending = [];
   };
 
@@ -331,7 +373,7 @@ function blocksFrom(nodes: HtmlNode[], ctx: Ctx): RichBlockNode[] {
 
 function blockFromNode(node: HtmlNode, ctx: Ctx): RichBlockNode[] {
   if (!isElement(node)) {
-    if (node.nodeType === 3) return textBlocks((node as TextNode).text);
+    if (node.nodeType === 3) return textBlocks((node as TextNode).text, ctx);
     return [];
   }
   const el = node;
@@ -345,7 +387,7 @@ function blockFromNode(node: HtmlNode, ctx: Ctx): RichBlockNode[] {
     case "div":
       return flowsFromNodes(el.childNodes, ctx);
     case "pre":
-      return [preBlock(el)];
+      return [preBlock(el, ctx)];
     case "blockquote":
       return [blocks.blockquote(blocksFrom(el.childNodes, ctx))];
     case "ul":
@@ -360,7 +402,7 @@ function blockFromNode(node: HtmlNode, ctx: Ctx): RichBlockNode[] {
       const summary = el.childNodes.find((n: HtmlNode) => isElement(n) && n.rawTagName.toLowerCase() === "summary");
       return [
         blocks.details(
-          summary ? clip(nodeText(summary)) : "Подробнее",
+          summary ? take(nodeText(summary), ctx, true) || "Подробнее" : "Подробнее",
           blocksFrom(el.childNodes.filter((n) => n !== summary), ctx),
           { open: true },
         ),
@@ -372,36 +414,54 @@ function blockFromNode(node: HtmlNode, ctx: Ctx): RichBlockNode[] {
       return [];
     default:
       // Строчные теги на верхнем уровне (от редактора) становятся абзацем.
-      return paragraphs(inlineRuns([el], ctx));
+      return paragraphs(inlineRuns([el], ctx), ctx);
   }
 }
 
 /** `pre`/`code` из редактора: язык берём из class="language-…". */
-function preBlock(el: HtmlElement): RichBlockNode {
+function preBlock(el: HtmlElement, ctx: Ctx): RichBlockNode {
   // node-html-parser отдаёт содержимое <pre> одним текстовым узлом, а вложенный
   // <code> внутри него — как обычный текст, поэтому разбираем разметку руками.
   const raw = nodeText(el);
   const codeOpen = /<code\b[^>]*>/i.exec(raw)?.[0] ?? "";
   const languageMatch = /language-([a-z0-9+#-]{1,20})/i.exec(codeOpen);
   const inner = raw.replace(/^\s*<code\b[^>]*>/i, "").replace(/<\/code>\s*$/i, "").trim();
-  const code = inner || raw.trim();
-  return languageMatch ? blocks.pre(clip(code), languageMatch[1]!) : blocks.pre(clip(code));
+  const code = take(inner || raw, ctx, true) || "…";
+  return languageMatch ? blocks.pre(code, languageMatch[1]!) : blocks.pre(code);
 }
 
 /**
  * HTML сайта → блоки «богатого» сообщения Telegram.
  * Относительные адреса изображений превращаются в абсолютные: Telegram
  * скачивает медиа сам, локальный путь ему недоступен.
+ *
+ * Текст не режется по абзацам: единственный ограничитель — общий бюджет
+ * сообщения, чтобы Bot API не отказал отправке.
  */
-export function htmlToRichBlocks(html: string, resolveUrl: ResolveUrl = identityUrl): RichBlockNode[] {
+export function htmlToRichBlocks(
+  html: string,
+  resolveUrl: ResolveUrl = identityUrl,
+  options: RichOptions = {},
+): RichBlockNode[] {
   const source = String(html ?? "").trim();
   if (!source) return [];
-  const ctx: Ctx = { resolveUrl, mediaLeft: MAX_MEDIA };
+  const ctx: Ctx = {
+    resolveUrl,
+    skipPhotos: options.skipPhotos === true,
+    mediaLeft: MAX_MEDIA,
+    textLeft: options.maxText ?? MAX_TEXT,
+  };
   // parse() всегда возвращает синтетический корень: его дети — узлы источника.
   const root = parse(source);
   let blockList = blocksFrom(root.childNodes, ctx);
-  if (blockList.length === 0) blockList = textBlocks(plainText(source));
-  if (blockList.length === 0) blockList = [blocks.paragraph([plainText(source).slice(0, 200) || "…"])];
+  if (blockList.length === 0) {
+    const text = take(plainText(source), ctx, true);
+    if (text) blockList = textBlocks(text, ctx);
+  }
+  if (blockList.length === 0) {
+    const text = take(plainText(source), ctx, true) || "…";
+    blockList = [blocks.paragraph([text.slice(0, 200)])];
+  }
   return blockList.slice(0, MAX_BLOCKS);
 }
 
@@ -468,9 +528,36 @@ export function richBlocksToPlainText(blockList: unknown[]): string {
   return parts.join("\n\n").replace(/\n{3,}/g, "\n\n").slice(0, 4000);
 }
 
-/** Блоки в том виде, в каком их принимает Bot API. */
+/**
+ * Сколько блоков Telegram насчитает в сообщении, включая вложенные: элементы
+ * списков, строки таблиц и содержимое цитат тоже идут в счёт (предел — 500).
+ */
+function countBlocks(value: unknown): number {
+  if (Array.isArray(value)) return value.reduce((sum: number, item) => sum + countBlocks(item), 0);
+  if (!value || typeof value !== "object") return 1;
+  const record = value as Record<string, unknown>;
+  let total = 1;
+  for (const key of ["blocks", "items", "cells"]) {
+    if (record[key] !== undefined) total += countBlocks(record[key]);
+  }
+  return total;
+}
+
+/**
+ * Блоки в том виде, в каком их принимает Bot API, с проверкой общего числа
+ * блоков: лишние отбрасываем, чтобы отправка не отказала целиком.
+ */
 export function toInputRichBlocks(blockList: RichBlockNode[]): unknown[] {
-  return blockList.map((block) => block.toInputRichBlock());
+  const out: unknown[] = [];
+  let used = 0;
+  for (const block of blockList) {
+    const input = block.toInputRichBlock();
+    const size = countBlocks(input);
+    if (used + size > MAX_BLOCKS) break;
+    used += size;
+    out.push(input);
+  }
+  return out;
 }
 
 /**
