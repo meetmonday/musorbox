@@ -7,6 +7,7 @@ import { getDrizzle } from "../core/db";
 import type { UserContext } from "../core/middleware";
 import { apiTokens, notifications, sessions, users } from "../core/schema";
 import { layoutWithSidebar } from "../layout/layout";
+import { countUnreadMessages } from "../messages/service";
 import { revokeApiToken, rotateApiToken } from "./tokens";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
@@ -30,7 +31,12 @@ app.use("/settings/api", async (c, next) => {
   if (!user) return c.redirect("/login");
   const unread = db.select({ n: count() }).from(notifications)
     .where(and(eq(notifications.userId, user.id), eq(notifications.read, false))).get();
-  c.set("user", { ...user, unreadCount: unread?.n ?? 0 });
+  const unreadMessages = await countUnreadMessages(user.id);
+  c.set("user", {
+    ...user,
+    unreadCount: unread?.n ?? 0,
+    unreadMessagesCount: unreadMessages,
+  });
   if (c.req.method === "POST") {
     const origin = c.req.header("Origin");
     const referer = c.req.header("Referer");
@@ -61,8 +67,8 @@ async function renderSettings(c: AppContext, token?: string) {
         <p><a href={`/users/${user.username}/settings`}>Вернуться в настройки профиля</a></p>
         <div class="div_block">
           <h2>Токен доступа</h2>
-          <p>Токен позволяет вашим программам работать от вашего имени через JSON API. Действуют те же ограничения и права, что и на сайте.</p>
-          <p>У учётной записи может быть только один токен. Он не имеет срока действия и работает после выхода из аккаунта. Не передавайте его другим людям и не публикуйте в коде.</p>
+          <p>Токен позволяет вашим программам работать от вашего имени через JSON API, включая чтение и отправку личных сообщений. Действуют те же ограничения и права, что и на сайте.</p>
+          <p>У учётной записи может быть только один токен. Он не имеет срока действия и работает после выхода из аккаунта. Храните его как пароль: не передавайте другим людям и не публикуйте в коде.</p>
           {token ? (
             <div role="status">
               <p><strong>Токен создан. Скопируйте его сейчас: он показан только один раз.</strong></p>

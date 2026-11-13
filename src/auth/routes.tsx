@@ -12,7 +12,7 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function renderAuthPage(c: Context<{ Variables: UserContext }>, opts: { action: "login" | "register"; error?: string; user?: string; passwordChanged?: boolean }) {
+async function renderAuthPage(c: Context<{ Variables: UserContext }>, opts: { action: "login" | "register"; error?: string; user?: string; passwordChanged?: boolean; next?: string }) {
   const user = c.get("user") ?? null;
   const isLogin = opts.action === "login";
   const title = isLogin ? `Вход на сайт — ${config.siteName}` : `Регистрация — ${config.siteName}`;
@@ -25,6 +25,7 @@ async function renderAuthPage(c: Context<{ Variables: UserContext }>, opts: { ac
         {opts.error ? <div style="color:#EE0000;margin-bottom:10px">{opts.error}</div> : null}
         {opts.passwordChanged ? <div class="div_block" role="status">Пароль изменён. Войдите с новым паролем.</div> : null}
         <form method="post" action={`/${opts.action}`} id="frm_auth">
+          {opts.next && opts.next !== "/" ? <input type="hidden" name="next" value={opts.next} /> : null}
           <table class="div_auth_table">
             <tr>
               <td class="auth_label">Логин:</td>
@@ -61,11 +62,11 @@ async function renderAuthPage(c: Context<{ Variables: UserContext }>, opts: { ac
         <p style="margin-top:20px;font-size:1.2em">
           {isLogin ? (
             <>
-              Нет аккаунта? <a href="/register" class="a_dashed">Зарегистрироваться</a>
+              Нет аккаунта? <a href={opts.next && opts.next !== "/" ? `/register?next=${encodeURIComponent(opts.next)}` : "/register"} class="a_dashed">Зарегистрироваться</a>
             </>
           ) : (
             <>
-              Уже есть аккаунт? <a href="/login" class="a_dashed">Войти</a>
+              Уже есть аккаунт? <a href={opts.next && opts.next !== "/" ? `/login?next=${encodeURIComponent(opts.next)}` : "/login"} class="a_dashed">Войти</a>
             </>
           )}
         </p>
@@ -75,19 +76,30 @@ async function renderAuthPage(c: Context<{ Variables: UserContext }>, opts: { ac
   return c.html(`<!DOCTYPE html>${html}`);
 }
 
-app.get("/login", (c) => renderAuthPage(c, { action: "login", passwordChanged: c.req.query("password_changed") === "1" }));
+function safeNext(value: unknown): string {
+  if (typeof value !== "string") return "/";
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\") || /[\r\n]/.test(value)) return "/";
+  return value;
+}
 
-app.get("/register", (c) => renderAuthPage(c, { action: "register" }));
+app.get("/login", (c) => renderAuthPage(c, {
+  action: "login",
+  passwordChanged: c.req.query("password_changed") === "1",
+  next: safeNext(c.req.query("next")),
+}));
+
+app.get("/register", (c) => renderAuthPage(c, { action: "register", next: safeNext(c.req.query("next")) }));
 
 app.post("/login", async (c) => {
   const body = await c.req.parseBody();
   const username = String(body.username ?? "").trim();
   const password = String(body.password ?? "");
+  const next = safeNext(body.next);
   await sleep(150);
   const result = await login(username, password);
   if (!result.ok) {
     c.status(401);
-    return renderAuthPage(c, { action: "login", error: result.error, user: username });
+    return renderAuthPage(c, { action: "login", error: result.error, user: username, next });
   }
   setCookie(c, "session_token", result.token, {
     httpOnly: true,
@@ -95,17 +107,18 @@ app.post("/login", async (c) => {
     path: "/",
     expires: result.expiresAt,
   });
-  return c.redirect("/");
+  return c.redirect(next);
 });
 
 app.post("/register", async (c) => {
   const body = await c.req.parseBody();
   const username = String(body.username ?? "").trim();
   const password = String(body.password ?? "");
+  const next = safeNext(body.next);
   const result = await register(username, password);
   if (!result.ok) {
     c.status(400);
-    return renderAuthPage(c, { action: "register", error: result.error, user: username });
+    return renderAuthPage(c, { action: "register", error: result.error, user: username, next });
   }
   setCookie(c, "session_token", result.token, {
     httpOnly: true,
@@ -113,7 +126,7 @@ app.post("/register", async (c) => {
     path: "/",
     expires: result.expiresAt,
   });
-  return c.redirect("/");
+  return c.redirect(next);
 });
 
 app.get("/logout", async (c) => {

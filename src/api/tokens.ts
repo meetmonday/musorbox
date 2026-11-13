@@ -3,6 +3,7 @@ import { and, count, eq } from "drizzle-orm";
 import { getDrizzle } from "../core/db";
 import type { SessionUser } from "../core/middleware";
 import { apiTokens, notifications, users } from "../core/schema";
+import { countUnreadMessages } from "../messages/service";
 
 export async function authenticateApiToken(token: string): Promise<SessionUser | undefined> {
   if (!/^[a-f0-9]{64}$/.test(token)) return undefined;
@@ -18,7 +19,12 @@ export async function authenticateApiToken(token: string): Promise<SessionUser |
   if (!user) return undefined;
   const unread = db.select({ n: count() }).from(notifications)
     .where(and(eq(notifications.userId, user.id), eq(notifications.read, false))).get();
-  return { ...user, unreadCount: unread?.n ?? 0 };
+  const unreadMessages = await countUnreadMessages(user.id);
+  return {
+    ...user,
+    unreadCount: unread?.n ?? 0,
+    unreadMessagesCount: unreadMessages,
+  };
 }
 
 export async function rotateApiToken(userId: number): Promise<string> {

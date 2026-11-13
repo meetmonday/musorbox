@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { streamSSE } from "hono/streaming";
 import { eq } from "drizzle-orm";
+import { config } from "../core/config";
 import { getDrizzle } from "../core/db";
 import { categories, comments, tags } from "../core/schema";
 import { isStaff } from "../core/middleware";
@@ -19,9 +21,32 @@ import type { TopicComment } from "../comments/service";
 import { getForumTags } from "../forum/service";
 import { castVote } from "../votes/service";
 import { authenticateApiToken } from "./tokens";
+import {
+  countUnreadMessages,
+  getMessageThread,
+  getMessageUpdates,
+  listConversations,
+  searchMessageUsers,
+  sendPrivateMessage,
+} from "../messages/service";
+import {
+  addGroupMember,
+  createGroupChat,
+  deleteGroup,
+  getGroupThread,
+  getGroupUpdates,
+  joinGroupByInvite,
+  leaveGroup,
+  listGroupConversations,
+  removeGroupMember,
+  resetGroupInvite,
+  sendGroupMessage,
+} from "../messages/group-service";
+import type { GroupThread } from "../messages/group-service";
+import { canOpenMessageStream, subscribeToMessageEvents } from "../messages/realtime";
 
 type ApiContext = Context<{ Variables: UserContext }>;
-type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 415;
+type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 415 | 429;
 
 class ApiError extends Error {
   constructor(public readonly status: ErrorStatus, message: string) {
@@ -179,12 +204,236 @@ function commentBody(value: unknown): string {
   return body;
 }
 
+function nonNegativeQuery(c: ApiContext, name: string, fallback: number = 0): number {
+  const raw = c.req.query(name);
+  if (raw === undefined) return fallback;
+  if (!/^\d+$/.test(raw)) throw new ApiError(400, `${name}: требуется целое число не меньше нуля.`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) throw new ApiError(400, `${name}: слишком большое число.`);
+  return value;
+}
+
+function optionalPositiveQuery(c: ApiContext, name: string): number | undefined {
+  const raw = c.req.query(name);
+  if (raw === undefined) return undefined;
+  if (!/^[1-9]\d*$/.test(raw)) throw new ApiError(400, `${name}: требуется положительное целое число.`);
+  return positiveId(Number(raw), name);
+}
+
+function inviteUrl(token: string): string {
+  return new URL(`/messages/groups/join/${token}`, config.baseUrl).toString();
+}
+
+function apiGroupThread(thread: GroupThread) {
+  const { inviteToken, ...group } = thread.group;
+  return { ...thread, group: { ...group, inviteUrl: inviteUrl(inviteToken) } };
+}
+
+function serviceError(result: { ok: false; error: string; status: 400 | 403 | 404 | 429 }): never {
+  throw new ApiError(result.status, result.error);
+}
+
 app.get("/api/me", (c) => {
   const user = requireUser(c);
   return c.json({ ok: true, user: {
     id: user.id, username: user.username, role: user.role, avatarUrl: user.avatarUrl,
-    banned: user.banned, unreadCount: user.unreadCount,
+    banned: user.banned, unreadCount: user.unreadCount, unreadMessagesCount: user.unreadMessagesCount,
   } });
+});
+
+app.get("/api/messages/events", (c) => {
+  const user = requireUser(c);
+  if (!canOpenMessageStream(user.id)) throw new ApiError(429, "Слишком много открытых realtime-соединений.");
+  c.header("X-Accel-Buffering", "no");
+  return streamSSE(c, async (stream) => {
+    const queue: Array<{ type: "message" | "read"; peerId?: number; groupId?: number; messageId?: number }> = [];
+    let wake: (() => void) | null = null;
+    const unsubscribe = subscribeToMessageEvents(user.id, (event) => {
+      if (queue.length < 100) queue.push(event);
+      const resume = wake;
+      wake = null;
+      resume?.();
+    });
+    stream.onAbort(() => {
+      unsubscribe();
+      const resume = wake;
+      wake = null;
+      resume?.();
+    });
+    await stream.writeSSE({ event: "ready", data: "{}", retry: 2000 });
+    try {
+      while (!stream.aborted) {
+        if (queue.length === 0) {
+          await new Promise<void>((resolve) => {
+            const finish = () => {
+              clearTimeout(timeout);
+              if (wake === finish) wake = null;
+              resolve();
+            };
+            const timeout = setTimeout(finish, 15_000);
+            wake = finish;
+          });
+        }
+        if (stream.aborted) break;
+        const event = queue.shift();
+        if (event) {
+          await stream.writeSSE({
+            event: event.type,
+            data: JSON.stringify(event),
+            id: String(event.messageId ?? Date.now()),
+          });
+        } else {
+          await stream.writeSSE({ event: "ping", data: String(Date.now()) });
+        }
+      }
+    } finally {
+      unsubscribe();
+    }
+  });
+});
+
+app.get("/api/messages", async (c) => {
+  const user = requireUser(c);
+  const limit = optionalPositiveQuery(c, "limit") ?? 50;
+  if (limit > 100) throw new ApiError(400, "limit должен быть не больше 100.");
+  const [direct, groups, unreadCount] = await Promise.all([
+    listConversations(user.id, 100),
+    listGroupConversations(user.id, 100),
+    countUnreadMessages(user.id),
+  ]);
+  const items = [...direct, ...groups]
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+    .slice(0, limit);
+  return c.json({ ok: true, items, unreadCount });
+});
+
+app.get("/api/messages/users", async (c) => {
+  const user = requireUser(c);
+  const q = text(c.req.query("q"), "q", 32);
+  const limit = optionalPositiveQuery(c, "limit") ?? 20;
+  if (limit > 30) throw new ApiError(400, "limit должен быть не больше 30.");
+  return c.json({ ok: true, items: await searchMessageUsers(user.id, q, limit) });
+});
+
+app.get("/api/messages/direct/:username", async (c) => {
+  const user = requireUser(c);
+  const thread = await getMessageThread(user.id, c.req.param("username"), optionalPositiveQuery(c, "before"));
+  if (!thread) throw new ApiError(404, "Пользователь сайта не найден.");
+  return c.json({ ok: true, thread });
+});
+
+app.get("/api/messages/direct/:username/updates", async (c) => {
+  const user = requireUser(c);
+  const after = nonNegativeQuery(c, "after");
+  const updates = await getMessageUpdates(user.id, c.req.param("username"), after);
+  if (!updates) throw new ApiError(404, "Пользователь сайта не найден.");
+  return c.json({ ok: true, ...updates });
+});
+
+app.post("/api/messages/direct/:username", async (c) => {
+  const user = requireUser(c);
+  const data = await jsonObject(c, ["body"]);
+  if (typeof data.body !== "string") throw new ApiError(400, "body: требуется строка.");
+  const result = await sendPrivateMessage(user.id, c.req.param("username"), data.body);
+  if (!result.ok) serviceError(result);
+  return c.json({ ok: true, message: result.message }, 201);
+});
+
+app.post("/api/messages/groups/join", async (c) => {
+  const user = requireUser(c);
+  const data = await jsonObject(c, ["token"]);
+  const token = text(data.token, "token", 100);
+  const result = await joinGroupByInvite(user.id, token);
+  if (!result.ok) serviceError(result);
+  return c.json({ ok: true, groupId: result.groupId });
+});
+
+app.post("/api/messages/groups", async (c) => {
+  const user = requireUser(c);
+  const data = await jsonObject(c, ["title", "members"]);
+  const title = text(data.title, "title", 80);
+  let members: string[] = [];
+  if (data.members !== undefined) {
+    if (!Array.isArray(data.members) || data.members.length > 49 || data.members.some((item) => typeof item !== "string")) {
+      throw new ApiError(400, "members: нужен массив не более чем из 49 логинов.");
+    }
+    members = (data.members as string[]).map((item) => item.trim());
+    if (members.some((item) => !/^[A-Za-z0-9_]{3,32}$/.test(item))) {
+      throw new ApiError(400, "members: каждый элемент должен быть корректным логином сайта.");
+    }
+  }
+  const result = await createGroupChat(user.id, title, members);
+  if (!result.ok) serviceError(result);
+  const thread = await getGroupThread(user.id, result.groupId);
+  if (!thread) throw new ApiError(404, "Созданная группа не найдена.");
+  c.header("Location", `/api/messages/groups/${result.groupId}`);
+  return c.json({ ok: true, thread: apiGroupThread(thread) }, 201);
+});
+
+app.get("/api/messages/groups/:id", async (c) => {
+  const user = requireUser(c);
+  const thread = await getGroupThread(user.id, routeId(c), optionalPositiveQuery(c, "before"));
+  if (!thread) throw new ApiError(404, "Групповой чат не найден или вы не участник.");
+  return c.json({ ok: true, thread: apiGroupThread(thread) });
+});
+
+app.get("/api/messages/groups/:id/updates", async (c) => {
+  const user = requireUser(c);
+  const updates = await getGroupUpdates(user.id, routeId(c), nonNegativeQuery(c, "after"));
+  if (!updates) throw new ApiError(404, "Групповой чат не найден или вы не участник.");
+  return c.json({ ok: true, messages: updates });
+});
+
+app.post("/api/messages/groups/:id/messages", async (c) => {
+  const user = requireUser(c);
+  const data = await jsonObject(c, ["body"]);
+  if (typeof data.body !== "string") throw new ApiError(400, "body: требуется строка.");
+  const result = await sendGroupMessage(user.id, routeId(c), data.body);
+  if (!result.ok) serviceError(result);
+  return c.json({ ok: true, message: result.message }, 201);
+});
+
+app.post("/api/messages/groups/:id/members", async (c) => {
+  const user = requireUser(c);
+  const data = await jsonObject(c, ["username"]);
+  const username = text(data.username, "username", 32);
+  const groupId = routeId(c);
+  const result = await addGroupMember(user.id, groupId, username);
+  if (!result.ok) serviceError(result);
+  return c.json({ ok: true }, 201);
+});
+
+app.delete("/api/messages/groups/:id/members/:userId", async (c) => {
+  const user = requireUser(c);
+  const rawUserId = c.req.param("userId");
+  if (!/^[1-9]\d*$/.test(rawUserId)) throw new ApiError(400, "Некорректный userId.");
+  const result = await removeGroupMember(user.id, routeId(c), positiveId(Number(rawUserId), "userId"));
+  if (!result.ok) serviceError(result);
+  return c.json({ ok: true });
+});
+
+app.post("/api/messages/groups/:id/invite/reset", async (c) => {
+  const user = requireUser(c);
+  const groupId = routeId(c);
+  const result = await resetGroupInvite(user.id, groupId);
+  if (!result.ok) serviceError(result);
+  const thread = await getGroupThread(user.id, groupId);
+  if (!thread) throw new ApiError(404, "Групповой чат не найден.");
+  return c.json({ ok: true, inviteUrl: inviteUrl(thread.group.inviteToken) });
+});
+
+app.post("/api/messages/groups/:id/leave", async (c) => {
+  const user = requireUser(c);
+  const result = await leaveGroup(user.id, routeId(c));
+  if (!result.ok) serviceError(result);
+  return c.json({ ok: true });
+});
+
+app.delete("/api/messages/groups/:id", async (c) => {
+  const user = requireUser(c);
+  const result = await deleteGroup(user.id, routeId(c));
+  if (!result.ok) serviceError(result);
+  return c.json({ ok: true });
 });
 
 app.get("/api/categories", async (c) => {

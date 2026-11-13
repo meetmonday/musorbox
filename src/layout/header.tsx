@@ -7,7 +7,31 @@ export type LayoutUser = {
   role: string;
   avatarUrl: string | null;
   unreadCount?: number;
+  unreadMessagesCount?: number;
 } | null;
+
+const UserbarIcon: FC<{
+  href: string;
+  title: string;
+  iconClass: string;
+  count?: number;
+}> = ({ href, title, iconClass, count = 0 }) => (
+  <div class="div_cell adh1" style="width:1%;white-space:nowrap;padding-left:7px">
+    <a
+      href={href}
+      title={title}
+      aria-label={count ? `${title}: ${count} непрочитанных` : title}
+      style="position:relative;display:block;width:30px;height:30px;padding:0;background:none"
+    >
+      <img src="/images/blank.gif" class={iconClass} alt="" />
+      {count ? (
+        <span style="position:absolute;top:-6px;right:-7px;z-index:540;min-width:15px;padding:1px 3px;background:#ee0000;color:#fff;font:bold 10px/14px Arial,sans-serif;text-align:center;box-shadow:1px 1px 3px #000">
+          {count > 99 ? "99+" : count}
+        </span>
+      ) : null}
+    </a>
+  </div>
+);
 
 export const LogoHeader: FC = () => (
   <div id="div_top_logo">
@@ -210,20 +234,20 @@ export const Header: FC<{ user: LayoutUser }> = ({ user }) => (
                       )}
                     </div>
                     {user ? (
-                      <div class="div_cell adh1" style="width:1%;white-space:nowrap">
-                        <a
+                      <>
+                        <UserbarIcon
                           href="/notifications"
                           title="Уведомления"
-                          style="position:relative;display:inline-block;vertical-align:middle;width:26px;height:26px;line-height:26px;text-align:center;background:#f0f0f0;border:1px solid #c9c9c9;font-size:15px;text-decoration:none;color:#555"
-                        >
-                          ✉
-                          {user.unreadCount ? (
-                            <span style="position:absolute;top:-7px;right:-7px;background:#ff4d4d;color:#fff;font-size:10px;line-height:14px;min-width:14px;text-align:center;border-radius:7px;padding:0 3px">
-                              {user.unreadCount > 99 ? "99+" : user.unreadCount}
-                            </span>
-                          ) : null}
-                        </a>
-                      </div>
+                          iconClass="img_userbar_notify"
+                          count={user.unreadCount}
+                        />
+                        <UserbarIcon
+                          href="/messages"
+                          title="Личные сообщения"
+                          iconClass="img_userbar_inbox"
+                          count={user.unreadMessagesCount}
+                        />
+                      </>
                     ) : null}
                     {user && (user.role === "editor" || user.role === "admin") ? (
                       <div class="div_cell" style="padding:0 8px;white-space:nowrap">

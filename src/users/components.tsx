@@ -156,8 +156,9 @@ export const ProfilePage: FC<{
   profile: UserProfile;
   rating: RatingInfo | null;
   isOwner: boolean;
+  canMessage?: boolean;
   following?: FollowingUiItem[];
-}> = ({ profile, rating, isOwner, following = [] }) => {
+}> = ({ profile, rating, isOwner, canMessage = false, following = [] }) => {
   const handle = profile.username;
   const hasContacts = !!(profile.country || profile.city || profile.vkUrl || profile.twitterUrl || profile.skype || profile.devices);
   return (
@@ -183,6 +184,17 @@ export const ProfilePage: FC<{
               <td>
                 <div style="float:left;border:5px solid #f0f0f0;padding:5px 10px;font-size:14px">
                   <div style="padding:2px 0px"><a href={`/user_topics/${handle}/`}>Все топики {handle}</a> [{profile.topicsCount}]</div>
+                  {canMessage ? (
+                    <div style="padding:5px 0px 2px">
+                      <a
+                        href={`/messages/${encodeURIComponent(handle)}`}
+                        class="blue"
+                        style="display:inline-block;padding:4px 9px;text-decoration:none"
+                      >
+                        Написать сообщение
+                      </a>
+                    </div>
+                  ) : null}
                 </div><br class="clear" />
               </td>
             </tr>
@@ -231,7 +243,13 @@ export const ProfilePage: FC<{
           </tbody></table>
         </div>
       </div>
-      {isOwner ? <div class="text12"><a href={`/users/${handle}/settings`}>Настройки профиля</a></div> : null}
+      {isOwner ? (
+        <div class="text12">
+          <a href={`/users/${handle}/settings`}>Настройки профиля</a>
+          {" · "}
+          <a href="/messages">Личные сообщения</a>
+        </div>
+      ) : null}
       {isOwner ? <FediversePanel username={handle} following={following} /> : null}
     </div>
   );

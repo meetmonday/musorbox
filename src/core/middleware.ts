@@ -3,6 +3,7 @@ import { getCookie } from "hono/cookie";
 import { getDrizzle } from "./db";
 import { sessions, users, notifications } from "./schema";
 import { and, count, eq } from "drizzle-orm";
+import { countUnreadMessages } from "../messages/service";
 
 export function isStaff(user: { role: string; banned?: boolean } | null | undefined): boolean {
   return !user?.banned && (user?.role === "editor" || user?.role === "admin");
@@ -15,6 +16,7 @@ export type SessionUser = {
   avatarUrl: string | null;
   banned: boolean;
   unreadCount: number;
+  unreadMessagesCount: number;
 };
 
 export type UserContext = {
@@ -33,8 +35,11 @@ export const sessionMiddleware = createMiddleware<{ Variables: UserContext }>(as
         where: eq(users.id, session.userId),
       });
       if (user && !user.banned) {
-        const unread = await db.select({ n: count() }).from(notifications)
-          .where(and(eq(notifications.userId, user.id), eq(notifications.read, false)));
+        const [unread, unreadMessages] = await Promise.all([
+          db.select({ n: count() }).from(notifications)
+            .where(and(eq(notifications.userId, user.id), eq(notifications.read, false))),
+          countUnreadMessages(user.id),
+        ]);
         c.set("user", {
           id: user.id,
           username: user.username,
@@ -42,6 +47,7 @@ export const sessionMiddleware = createMiddleware<{ Variables: UserContext }>(as
           avatarUrl: user.avatarUrl,
           banned: user.banned,
           unreadCount: unread[0]?.n ?? 0,
+          unreadMessagesCount: unreadMessages,
         });
       }
     }
@@ -52,7 +58,9 @@ export const sessionMiddleware = createMiddleware<{ Variables: UserContext }>(as
 export const requireAuth = createMiddleware<{ Variables: UserContext }>(async (c, next) => {
   const user = c.get("user");
   if (!user) {
-    return c.redirect("/login");
+    const url = new URL(c.req.url);
+    const next = `${url.pathname}${url.search}`;
+    return c.redirect(`/login?next=${encodeURIComponent(next)}`);
   }
   await next();
 });

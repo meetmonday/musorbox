@@ -16,6 +16,7 @@ import editorRoutes from "./editor/routes";
 import pagesRoutes from "./pages/routes";
 import activityPubRoutes from "./activitypub/routes";
 import notificationsRoutes from "./notifications/routes";
+import messagesRoutes from "./messages/routes";
 import moderationRoutes from "./moderation/routes";
 import apiRoutes from "./api/routes";
 import apiSettingsRoutes from "./api/settings";
@@ -49,6 +50,7 @@ app.route("/", usersRoutes);
 app.route("/", editorRoutes);
 app.route("/", pagesRoutes);
 app.route("/", notificationsRoutes);
+app.route("/", messagesRoutes);
 app.route("/", moderationRoutes);
 
 app.all("*", (c) => c.text("Not found", 404));

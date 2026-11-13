@@ -20,6 +20,7 @@ import { RecentDiscussions, NewOnSite, HotTopics, SidebarAd } from "../sidebar/c
 import { getHotTopics, getRecentDiscussions, getRecentTopics } from "../topics/service";
 import { listFollowingForUi } from "../activitypub/service";
 import { pluralize } from "../core/utils";
+import { isRealMessageUser } from "../messages/service";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
@@ -50,10 +51,11 @@ async function handleProfile(c: AppContext) {
 
   const current = c.get("user") ?? null;
   const isOwner = current?.id === profile.id;
-  const [rating, sidebar, following] = await Promise.all([
+  const [rating, sidebar, following, messageable] = await Promise.all([
     getRatingFor(profile.id, profile.ratingOptout),
     renderSidebar(),
     isOwner ? listFollowingForUi(profile.id) : Promise.resolve([]),
+    current && !isOwner ? isRealMessageUser(profile.id) : Promise.resolve(false),
   ]);
 
   const html = await layoutWithSidebar({
@@ -68,6 +70,7 @@ async function handleProfile(c: AppContext) {
         profile={profile}
         rating={rating}
         isOwner={isOwner}
+        canMessage={messageable}
         following={following}
       />
     ),

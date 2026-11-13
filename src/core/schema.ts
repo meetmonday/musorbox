@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer, primaryKey, uniqueIndex, index } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { sqliteTable, text, integer, primaryKey, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable(
   "users",
@@ -186,6 +187,82 @@ export const notifications = sqliteTable("notifications", {
 }, (t) => [
   index("notifications_user_read_idx").on(t.userId, t.read),
   uniqueIndex("notifications_event_idx").on(t.userId, t.eventKey),
+]);
+
+/* ─── Личные сообщения ─── */
+
+/**
+ * Диалог двух локальных пользователей. Меньший id всегда лежит в userLowId:
+ * это не даёт завести две переписки для одной пары в разном порядке.
+ */
+export const messageConversations = sqliteTable("message_conversations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userLowId: integer("user_low_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userHighId: integer("user_high_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("message_conversations_pair_idx").on(t.userLowId, t.userHighId),
+  index("message_conversations_low_updated_idx").on(t.userLowId, t.updatedAt),
+  index("message_conversations_high_updated_idx").on(t.userHighId, t.updatedAt),
+  check("message_conversations_order_check", sql`${t.userLowId} < ${t.userHighId}`),
+]);
+
+/** Сообщения хранят только обычный текст; HTML из личной переписки не исполняется. */
+export const privateMessages = sqliteTable("private_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  conversationId: integer("conversation_id").notNull().references(() => messageConversations.id, { onDelete: "cascade" }),
+  senderId: integer("sender_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  recipientId: integer("recipient_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  body: text("body").notNull(),
+  readAt: integer("read_at", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+}, (t) => [
+  index("private_messages_conversation_idx").on(t.conversationId, t.id),
+  index("private_messages_recipient_read_idx").on(t.recipientId, t.readAt, t.id),
+  index("private_messages_sender_created_idx").on(t.senderId, t.createdAt),
+  check("private_messages_users_check", sql`${t.senderId} <> ${t.recipientId}`),
+  check("private_messages_body_check", sql`length(${t.body}) between 1 and 4000`),
+]);
+
+/** Групповой чат. Владелец управляет составом и не может покинуть чат без удаления. */
+export const messageGroups = sqliteTable("message_groups", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  title: text("title").notNull(),
+  inviteToken: text("invite_token"),
+  ownerId: integer("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+}, (t) => [
+  index("message_groups_owner_idx").on(t.ownerId),
+  index("message_groups_updated_idx").on(t.updatedAt),
+  uniqueIndex("message_groups_invite_token_idx").on(t.inviteToken),
+  check("message_groups_title_check", sql`length(${t.title}) between 2 and 80`),
+]);
+
+/** Состав группы и позиция, до которой пользователь прочитал переписку. */
+export const messageGroupMembers = sqliteTable("message_group_members", {
+  groupId: integer("group_id").notNull().references(() => messageGroups.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["owner", "member"] }).notNull().default("member"),
+  lastReadMessageId: integer("last_read_message_id").notNull().default(0),
+  joinedAt: integer("joined_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+}, (t) => [
+  primaryKey({ columns: [t.groupId, t.userId] }),
+  index("message_group_members_user_idx").on(t.userId, t.groupId),
+]);
+
+/** Сообщения группы; при удалении обычного участника история остаётся. */
+export const messageGroupMessages = sqliteTable("message_group_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  groupId: integer("group_id").notNull().references(() => messageGroups.id, { onDelete: "cascade" }),
+  senderId: integer("sender_id").references(() => users.id, { onDelete: "set null" }),
+  body: text("body").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+}, (t) => [
+  index("message_group_messages_group_idx").on(t.groupId, t.id),
+  index("message_group_messages_sender_created_idx").on(t.senderId, t.createdAt),
+  check("message_group_messages_body_check", sql`length(${t.body}) between 1 and 4000`),
 ]);
 
 export const modLog = sqliteTable("mod_log", {
