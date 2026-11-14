@@ -5,10 +5,10 @@ import { and, count, eq, gt } from "drizzle-orm";
 import { config } from "../core/config";
 import { getDrizzle } from "../core/db";
 import type { UserContext } from "../core/middleware";
-import { apiTokens, notifications, sessions, users } from "../core/schema";
+import { apiTokens, appTokens, notifications, sessions, users } from "../core/schema";
 import { layoutWithSidebar } from "../layout/layout";
 import { countUnreadMessages } from "../messages/service";
-import { revokeApiToken, rotateApiToken } from "./tokens";
+import { revokeAllAppTokens, revokeApiToken, rotateApiToken } from "./tokens";
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
 type AppContext = Context<{ Variables: UserContext }>;
@@ -58,6 +58,8 @@ async function renderSettings(c: AppContext, token?: string) {
   const user = c.get("user")!;
   const active = getDrizzle().select({ userId: apiTokens.userId }).from(apiTokens)
     .where(eq(apiTokens.userId, user.id)).get() !== undefined;
+  const appTokenCount = getDrizzle().select({ n: count() }).from(appTokens)
+    .where(eq(appTokens.userId, user.id)).get()?.n ?? 0;
   const html = await layoutWithSidebar({
     title: `Публичный API — ${config.siteName}`,
     user,
@@ -68,7 +70,8 @@ async function renderSettings(c: AppContext, token?: string) {
         <div class="div_block">
           <h2>Токен доступа</h2>
           <p>Токен позволяет вашим программам работать от вашего имени через JSON API, включая чтение и отправку личных сообщений. Действуют те же ограничения и права, что и на сайте.</p>
-          <p>У учётной записи может быть только один токен. Он не имеет срока действия и работает после выхода из аккаунта. Храните его как пароль: не передавайте другим людям и не публикуйте в коде.</p>
+          <p>У учётной записи может быть только один ручной API-токен. Он не имеет срока действия и работает после выхода из аккаунта. Храните его как пароль: не передавайте другим людям и не публикуйте в коде.</p>
+          <p>Токены, которые Musorgram получает при входе по логину и паролю, хранятся отдельно и не заменяют этот токен.</p>
           {token ? (
             <div role="status">
               <p><strong>Токен создан. Скопируйте его сейчас: он показан только один раз.</strong></p>
@@ -89,11 +92,21 @@ async function renderSettings(c: AppContext, token?: string) {
               <p class="dark">Отзыв сразу отключит доступ по этому токену. Позже можно создать новый.</p>
             </form>
           ) : null}
+          <hr />
+          <h2>Входы в приложениях</h2>
+          <p>{appTokenCount > 0 ? `Активных токенов приложений: ${appTokenCount}.` : "Активных токенов приложений нет."}</p>
+          {appTokenCount > 0 ? (
+            <form method="post" action="/settings/api">
+              <input type="hidden" name="action" value="revoke_apps" />
+              <button type="submit" class="blue" style="padding:5px 15px;border:0;cursor:pointer">Завершить все входы в приложениях</button>
+              <p class="dark">Все приложения, включая Musorgram, должны будут снова запросить логин и пароль.</p>
+            </form>
+          ) : null}
         </div>
         <div class="div_block">
           <h2>Как использовать</h2>
           <p>Отправляйте токен только в заголовке <code>Authorization: Bearer ВАШ_ТОКЕН</code> по HTTPS. Не добавляйте его в адрес запроса.</p>
-          <p>Для проверки доступа выполните <code>GET /api/me</code>. Настройки токена доступны только после входа на сайт, не через API.</p>
+          <p>Для проверки доступа выполните <code>GET /api/me</code>. Создание и отзыв ручного токена доступны только после входа на сайт.</p>
         </div>
       </div>
     ),
@@ -112,6 +125,10 @@ app.post("/settings/api", async (c) => {
   }
   if (body.action === "revoke") {
     await revokeApiToken(user.id);
+    return c.redirect("/settings/api", 303);
+  }
+  if (body.action === "revoke_apps") {
+    await revokeAllAppTokens(user.id);
     return c.redirect("/settings/api", 303);
   }
   return c.text("Неизвестное действие.", 400);

@@ -20,7 +20,8 @@ import {
 import type { TopicComment } from "../comments/service";
 import { getForumTags } from "../forum/service";
 import { castVote } from "../votes/service";
-import { authenticateApiToken } from "./tokens";
+import { authenticateCredentials } from "../auth/service";
+import { authenticateApiToken, issueAppToken, revokeAppToken } from "./tokens";
 import {
   countUnreadMessages,
   getMessageThread,
@@ -56,6 +57,33 @@ class ApiError extends Error {
 
 const app = new Hono<{ Variables: UserContext }>({ strict: false });
 
+const MAX_LOGIN_IPS = 10_000;
+const loginAttempts = new Map<string, { time: number; count: number }>();
+
+function clientIp(c: ApiContext): string {
+  return c.req.header("x-real-ip")
+    || c.req.header("cf-connecting-ip")
+    || c.req.header("x-forwarded-for")?.split(",")[0]?.trim()
+    || "unknown";
+}
+
+function loginRateLimited(ip: string): boolean {
+  const now = Date.now();
+  if (loginAttempts.size >= MAX_LOGIN_IPS) {
+    for (const [key, value] of loginAttempts) {
+      if (now - value.time > 60_000) loginAttempts.delete(key);
+    }
+    if (loginAttempts.size >= MAX_LOGIN_IPS) loginAttempts.clear();
+  }
+  const entry = loginAttempts.get(ip);
+  if (!entry || now - entry.time > 60_000) {
+    loginAttempts.set(ip, { time: now, count: 1 });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > 10;
+}
+
 app.onError((error, c) => {
   if (error instanceof ApiError) {
     if (error.status === 401) c.header("WWW-Authenticate", "Bearer");
@@ -78,7 +106,8 @@ app.use("/api/*", async (c, next) => {
     if (user.banned) throw new ApiError(403, "Аккаунт заблокирован.");
     c.set("user", user);
   }
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") requireUser(c);
+  const credentialLogin = c.req.method === "POST" && c.req.path === "/api/auth/login";
+  if (!credentialLogin && c.req.method !== "GET" && c.req.method !== "HEAD") requireUser(c);
   await next();
 });
 
@@ -86,6 +115,12 @@ function requireUser(c: ApiContext): SessionUser {
   const user = c.get("user");
   if (!user) throw new ApiError(401, "Для этого действия нужен API-токен.");
   return user;
+}
+
+function requestBearerToken(c: ApiContext): string {
+  const match = /^Bearer ([^\s]+)$/i.exec(c.req.header("Authorization") ?? "");
+  if (!match) throw new ApiError(401, "Нужен заголовок Authorization: Bearer <токен>.");
+  return match[1]!;
 }
 
 function positiveId(value: unknown, name = "id"): number {
@@ -232,6 +267,30 @@ function apiGroupThread(thread: GroupThread) {
 function serviceError(result: { ok: false; error: string; status: 400 | 403 | 404 | 429 }): never {
   throw new ApiError(result.status, result.error);
 }
+
+app.post("/api/auth/login", async (c) => {
+  if (loginRateLimited(clientIp(c))) {
+    c.header("Retry-After", "60");
+    throw new ApiError(429, "Слишком много попыток входа. Подождите минуту.");
+  }
+  const data = await jsonObject(c, ["username", "password"]);
+  if (typeof data.username !== "string" || data.username.trim().length < 1 || data.username.trim().length > 32) {
+    throw new ApiError(400, "username: требуется строка от 1 до 32 символов.");
+  }
+  if (typeof data.password !== "string" || data.password.length < 1 || data.password.length > 1024) {
+    throw new ApiError(400, "password: требуется непустая строка не длиннее 1024 символов.");
+  }
+  const result = await authenticateCredentials(data.username, data.password);
+  if (!result.ok) throw new ApiError(401, result.error);
+  const token = await issueAppToken(result.userId, "Musorgram");
+  return c.json({ ok: true, token, tokenType: "Bearer" }, 201);
+});
+
+app.delete("/api/auth/token", async (c) => {
+  requireUser(c);
+  await revokeAppToken(requestBearerToken(c));
+  return c.json({ ok: true });
+});
 
 app.get("/api/me", (c) => {
   const user = requireUser(c);

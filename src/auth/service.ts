@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { compare, hash } from "bcryptjs";
 import { and, eq } from "drizzle-orm";
 import { getDrizzle } from "../core/db";
-import { sessions, users } from "../core/schema";
+import { appTokens, sessions, users } from "../core/schema";
 
 export type AuthResult =
   | { ok: true; userId: number; token: string; expiresAt: Date }
@@ -10,7 +10,14 @@ export type AuthResult =
 
 const SESSION_DAYS = 30;
 
-export async function login(username: string, password: string): Promise<AuthResult> {
+export type CredentialsResult =
+  | { ok: true; userId: number; passwordHash: string }
+  | { ok: false; error: string };
+
+export async function authenticateCredentials(
+  username: string,
+  password: string,
+): Promise<CredentialsResult> {
   const db = getDrizzle();
   const user = await db.query.users.findFirst({
     where: eq(users.username, username.trim()),
@@ -19,7 +26,13 @@ export async function login(username: string, password: string): Promise<AuthRes
   const valid = await compare(password, user.passwordHash);
   if (!valid) return { ok: false, error: "Неверный логин или пароль." };
   if (user.banned) return { ok: false, error: "Учётная запись заблокирована." };
-  return createSession(user.id, user.passwordHash);
+  return { ok: true, userId: user.id, passwordHash: user.passwordHash };
+}
+
+export async function login(username: string, password: string): Promise<AuthResult> {
+  const credentials = await authenticateCredentials(username, password);
+  if (!credentials.ok) return credentials;
+  return createSession(credentials.userId, credentials.passwordHash);
 }
 
 export async function register(username: string, password: string): Promise<AuthResult> {
@@ -77,6 +90,7 @@ export async function changePassword(
     )).returning({ id: users.id }).get();
     if (!updated) return { ok: false as const, error: "Не удалось изменить пароль. Войдите снова." };
     tx.delete(sessions).where(eq(sessions.userId, userId)).run();
+    tx.delete(appTokens).where(eq(appTokens.userId, userId)).run();
     return { ok: true as const };
   });
 }

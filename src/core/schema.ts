@@ -54,6 +54,23 @@ export const apiTokens = sqliteTable(
   (t) => [uniqueIndex("api_tokens_hash_idx").on(t.tokenHash)],
 );
 
+export const appTokens = sqliteTable(
+  "app_tokens",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    clientName: text("client_name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("app_tokens_hash_idx").on(t.tokenHash),
+    index("app_tokens_user_idx").on(t.userId),
+  ],
+);
+
 export const categories = sqliteTable(
   "categories",
   {
