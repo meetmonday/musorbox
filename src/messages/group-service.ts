@@ -17,6 +17,7 @@ import {
   messageGroupMembers,
   messageGroupMessages,
   messageGroups,
+  messageImages,
   privateMessages,
   tgUsers,
   users,
@@ -24,6 +25,12 @@ import {
 import { publishMessageEvent } from "./realtime";
 import { isRealMessageUser, prepareMessageBody } from "./service";
 import type { MessageListItem } from "./service";
+import {
+  apiMessageImage,
+  cleanupMessageImages,
+  groupMessageImagesById,
+} from "./media";
+import type { ApiMessageImage, PreparedMessageImage } from "./media";
 
 const MAX_GROUP_MEMBERS = 50;
 const SENDS_PER_MINUTE = 30;
@@ -48,8 +55,10 @@ export type GroupConversationListItem = {
     id: number;
     senderId: number | null;
     senderName: string;
+    senderAvatarUrl: string | null;
     body: string;
     createdAt: Date;
+    images: ApiMessageImage[];
   } | null;
 };
 
@@ -107,6 +116,7 @@ function toMessage(
     senderAvatarUrl: string | null;
   },
   currentUserId: number,
+  images: ApiMessageImage[] = [],
 ): MessageListItem {
   return {
     id: row.id,
@@ -117,6 +127,7 @@ function toMessage(
     senderUsername: row.senderUsername ?? "Удалённый пользователь",
     senderAvatarUrl: row.senderAvatarUrl,
     own: row.senderId === currentUserId,
+    images,
   };
 }
 
@@ -206,15 +217,19 @@ export async function listGroupConversations(
     .orderBy(desc(messageGroups.updatedAt), desc(messageGroups.id))
     .limit(Math.max(1, Math.min(100, limit)));
 
-  return rows.map((row) => {
-    const lastMessage = db
+  const lastByGroup = new Map(rows.map((row) => [row.id, db
       .select(groupMessageSelection)
       .from(messageGroupMessages)
       .leftJoin(users, eq(users.id, messageGroupMessages.senderId))
       .where(eq(messageGroupMessages.groupId, row.id))
       .orderBy(desc(messageGroupMessages.id))
       .limit(1)
-      .get();
+      .get() ?? null]));
+  const imageMap = await groupMessageImagesById(
+    [...lastByGroup.values()].flatMap((message) => message ? [message.id] : []),
+  );
+  return rows.map((row) => {
+    const lastMessage = lastByGroup.get(row.id) ?? null;
     const unread = db
       .select({ n: count() })
       .from(messageGroupMessages)
@@ -240,8 +255,10 @@ export async function listGroupConversations(
         id: lastMessage.id,
         senderId: lastMessage.senderId,
         senderName: lastMessage.senderUsername ?? "Удалённый пользователь",
+        senderAvatarUrl: lastMessage.senderAvatarUrl,
         body: lastMessage.body,
         createdAt: lastMessage.createdAt,
+        images: imageMap.get(lastMessage.id) ?? [],
       } : null,
     };
   });
@@ -282,6 +299,7 @@ export async function getGroupThread(
     .limit(pageSize + 1);
   const hasOlder = rows.length > pageSize;
   const page = rows.slice(0, pageSize).reverse();
+  const imageMap = await groupMessageImagesById(page.map((row) => row.id));
   return {
     group: {
       id: membership.id,
@@ -291,7 +309,7 @@ export async function getGroupThread(
       inviteToken,
     },
     members: await listMembers(groupId),
-    messages: page.map((row) => toMessage(row, userId)),
+    messages: page.map((row) => toMessage(row, userId, imageMap.get(row.id) ?? [])),
     currentUserRole: membership.role,
     hasOlder,
     olderBefore: hasOlder ? page[0]?.id ?? null : null,
@@ -312,7 +330,8 @@ export async function getGroupUpdates(
     .where(and(eq(messageGroupMessages.groupId, groupId), gt(messageGroupMessages.id, after)))
     .orderBy(messageGroupMessages.id)
     .limit(100);
-  return rows.map((row) => toMessage(row, userId));
+  const imageMap = await groupMessageImagesById(rows.map((row) => row.id));
+  return rows.map((row) => toMessage(row, userId, imageMap.get(row.id) ?? []));
 }
 
 export async function createGroupChat(
@@ -376,8 +395,9 @@ export async function sendGroupMessage(
   senderId: number,
   groupId: number,
   rawBody: string,
+  images: PreparedMessageImage[] = [],
 ): Promise<SendGroupMessageResult> {
-  const prepared = prepareMessageBody(rawBody);
+  const prepared = prepareMessageBody(rawBody, images.length > 0);
   if (!prepared.ok) return { ok: false, error: prepared.error, status: 400 };
   if (!await isRealMessageUser(senderId)) {
     return { ok: false, error: "Групповые чаты доступны только пользователям сайта.", status: 403 };
@@ -411,8 +431,18 @@ export async function sendGroupMessage(
       .returning()
       .get();
     if (!message) throw new Error("Не удалось сохранить сообщение группы");
+    const imageRows = images.map((image, position) => {
+      const row = tx.insert(messageImages).values({
+        groupMessageId: message.id,
+        position,
+        ...image,
+        createdAt: now,
+      }).returning().get();
+      if (!row) throw new Error("Не удалось сохранить изображение сообщения группы");
+      return row;
+    });
     tx.update(messageGroups).set({ updatedAt: now }).where(eq(messageGroups.id, groupId)).run();
-    return message;
+    return { message, images: imageRows };
   });
   const memberRows = await db
     .select({ userId: messageGroupMembers.userId })
@@ -422,16 +452,16 @@ export async function sendGroupMessage(
     publishMessageEvent(member.userId, {
       type: "message",
       groupId,
-      messageId: inserted.id,
+      messageId: inserted.message.id,
     });
   }
   return {
     ok: true,
     message: toMessage({
-      ...inserted,
+      ...inserted.message,
       senderUsername: sender.username,
       senderAvatarUrl: sender.avatarUrl,
-    }, senderId),
+    }, senderId, inserted.images.map(apiMessageImage)),
   };
 }
 
@@ -491,10 +521,17 @@ export async function leaveGroup(userId: number, groupId: number): Promise<Group
 }
 
 export async function deleteGroup(ownerId: number, groupId: number): Promise<GroupActionResult> {
-  const deleted = await getDrizzle().delete(messageGroups)
+  const db = getDrizzle();
+  const storedImages = await db
+    .select({ storageKey: messageImages.storageKey, thumbnailKey: messageImages.thumbnailKey })
+    .from(messageImages)
+    .innerJoin(messageGroupMessages, eq(messageGroupMessages.id, messageImages.groupMessageId))
+    .where(eq(messageGroupMessages.groupId, groupId));
+  const deleted = await db.delete(messageGroups)
     .where(and(eq(messageGroups.id, groupId), eq(messageGroups.ownerId, ownerId)))
     .returning({ id: messageGroups.id });
   if (!deleted.length) return { ok: false, error: "Группа не найдена или у вас нет прав на её удаление.", status: 403 };
+  cleanupMessageImages(storedImages);
   return { ok: true };
 }
 

@@ -45,9 +45,17 @@ import {
 } from "../messages/group-service";
 import type { GroupThread } from "../messages/group-service";
 import { canOpenMessageStream, subscribeToMessageEvents } from "../messages/realtime";
+import {
+  cleanupMessageImages,
+  MAX_MESSAGE_IMAGES_TOTAL_BYTES,
+  MessageImageError,
+  openMessageImage,
+  prepareMessageImages,
+} from "../messages/media";
+import type { PreparedMessageImage } from "../messages/media";
 
 type ApiContext = Context<{ Variables: UserContext }>;
-type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 415 | 429;
+type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429;
 
 class ApiError extends Error {
   constructor(public readonly status: ErrorStatus, message: string) {
@@ -153,6 +161,51 @@ async function jsonObject(c: ApiContext, fields: string[]): Promise<Record<strin
     throw new ApiError(400, "Неизвестное поле в JSON-объекте.");
   }
   return value as Record<string, unknown>;
+}
+
+type MessageInput = { body: string; images: PreparedMessageImage[] };
+
+async function messageInput(c: ApiContext): Promise<MessageInput> {
+  const contentType = c.req.header("Content-Type") ?? "";
+  if (/^application\/json(?:\s*;|$)/i.test(contentType)) {
+    const data = await jsonObject(c, ["body"]);
+    if (typeof data.body !== "string") throw new ApiError(400, "body: требуется строка.");
+    return { body: data.body, images: [] };
+  }
+  if (!/^multipart\/form-data(?:\s*;|$)/i.test(contentType)) {
+    throw new ApiError(415, "Нужен Content-Type: application/json или multipart/form-data.");
+  }
+  const contentLength = Number(c.req.header("Content-Length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_MESSAGE_IMAGES_TOTAL_BYTES + 1024 * 1024) {
+    throw new ApiError(413, "Общий размер изображений не должен превышать 50 МиБ.");
+  }
+
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    throw new ApiError(400, "Некорректное multipart-тело.");
+  }
+  for (const key of new Set(form.keys())) {
+    if (key !== "body" && key !== "images") throw new ApiError(400, `Неизвестное multipart-поле: ${key}.`);
+  }
+  const bodyValue = form.get("body");
+  if (bodyValue !== null && typeof bodyValue !== "string") {
+    throw new ApiError(400, "body: требуется строка.");
+  }
+  const imageValues = form.getAll("images");
+  if (imageValues.some((value) => !(value instanceof File))) {
+    throw new ApiError(400, "images: требуются файлы изображений.");
+  }
+  try {
+    return {
+      body: bodyValue ?? "",
+      images: await prepareMessageImages(imageValues as File[]),
+    };
+  } catch (error) {
+    if (error instanceof MessageImageError) throw new ApiError(error.status, error.message);
+    throw error;
+  }
 }
 
 function text(value: unknown, name: string, maxLength: number): string {
@@ -374,6 +427,20 @@ app.get("/api/messages/users", async (c) => {
   return c.json({ ok: true, items: await searchMessageUsers(user.id, q, limit) });
 });
 
+app.get("/api/messages/media/:id", async (c) => {
+  const user = requireUser(c);
+  const size = c.req.query("size");
+  if (size !== undefined && size !== "thumb") throw new ApiError(400, "size: поддерживается только thumb.");
+  const media = await openMessageImage(routeId(c), user.id, size === "thumb");
+  if (!media) throw new ApiError(404, "Изображение не найдено.");
+  c.header("Content-Type", media.mimeType);
+  c.header("Content-Length", String(media.file.size));
+  c.header("Content-Disposition", "inline");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Cache-Control", "private, max-age=2592000");
+  return c.body(media.file.stream());
+});
+
 app.get("/api/messages/direct/:username", async (c) => {
   const user = requireUser(c);
   const thread = await getMessageThread(user.id, c.req.param("username"), optionalPositiveQuery(c, "before"));
@@ -391,11 +458,16 @@ app.get("/api/messages/direct/:username/updates", async (c) => {
 
 app.post("/api/messages/direct/:username", async (c) => {
   const user = requireUser(c);
-  const data = await jsonObject(c, ["body"]);
-  if (typeof data.body !== "string") throw new ApiError(400, "body: требуется строка.");
-  const result = await sendPrivateMessage(user.id, c.req.param("username"), data.body);
-  if (!result.ok) serviceError(result);
-  return c.json({ ok: true, message: result.message }, 201);
+  const input = await messageInput(c);
+  let stored = false;
+  try {
+    const result = await sendPrivateMessage(user.id, c.req.param("username"), input.body, input.images);
+    if (!result.ok) serviceError(result);
+    stored = true;
+    return c.json({ ok: true, message: result.message }, 201);
+  } finally {
+    if (!stored) cleanupMessageImages(input.images);
+  }
 });
 
 app.post("/api/messages/groups/join", async (c) => {
@@ -445,11 +517,16 @@ app.get("/api/messages/groups/:id/updates", async (c) => {
 
 app.post("/api/messages/groups/:id/messages", async (c) => {
   const user = requireUser(c);
-  const data = await jsonObject(c, ["body"]);
-  if (typeof data.body !== "string") throw new ApiError(400, "body: требуется строка.");
-  const result = await sendGroupMessage(user.id, routeId(c), data.body);
-  if (!result.ok) serviceError(result);
-  return c.json({ ok: true, message: result.message }, 201);
+  const input = await messageInput(c);
+  let stored = false;
+  try {
+    const result = await sendGroupMessage(user.id, routeId(c), input.body, input.images);
+    if (!result.ok) serviceError(result);
+    stored = true;
+    return c.json({ ok: true, message: result.message }, 201);
+  } finally {
+    if (!stored) cleanupMessageImages(input.images);
+  }
 });
 
 app.post("/api/messages/groups/:id/members", async (c) => {

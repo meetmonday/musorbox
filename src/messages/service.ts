@@ -17,11 +17,17 @@ import {
   messageConversations,
   messageGroupMembers,
   messageGroupMessages,
+  messageImages,
   privateMessages,
   tgUsers,
   users,
 } from "../core/schema";
 import { publishMessageEvent } from "./realtime";
+import {
+  apiMessageImage,
+  privateMessageImagesById,
+} from "./media";
+import type { ApiMessageImage, PreparedMessageImage } from "./media";
 
 export const MESSAGE_MAX_LENGTH = 4000;
 const SENDS_PER_MINUTE = 30;
@@ -45,6 +51,7 @@ export type MessageListItem = {
   senderUsername: string;
   senderAvatarUrl: string | null;
   own: boolean;
+  images: ApiMessageImage[];
 };
 
 export type ConversationListItem = {
@@ -58,6 +65,7 @@ export type ConversationListItem = {
     senderId: number;
     body: string;
     createdAt: Date;
+    images: ApiMessageImage[];
   } | null;
 };
 
@@ -106,9 +114,12 @@ function messageLength(value: string): number {
   return Array.from(value).length;
 }
 
-export function prepareMessageBody(rawBody: string): { ok: true; body: string } | { ok: false; error: string } {
+export function prepareMessageBody(
+  rawBody: string,
+  allowEmpty: boolean = false,
+): { ok: true; body: string } | { ok: false; error: string } {
   const body = normalizeBody(rawBody);
-  if (!body) return { ok: false, error: "Напишите сообщение." };
+  if (!body && !allowEmpty) return { ok: false, error: "Напишите сообщение." };
   if (messageLength(body) > MESSAGE_MAX_LENGTH) {
     return { ok: false, error: `Сообщение должно быть не длиннее ${MESSAGE_MAX_LENGTH} символов.` };
   }
@@ -120,6 +131,7 @@ function toMessage(
   currentUserId: number,
   currentUser: Pick<MessageUser, "username" | "avatarUrl">,
   partner: Pick<MessageUser, "username" | "avatarUrl">,
+  images: ApiMessageImage[] = [],
 ): MessageListItem {
   const own = row.senderId === currentUserId;
   const sender = own ? currentUser : partner;
@@ -133,6 +145,7 @@ function toMessage(
     senderUsername: sender.username,
     senderAvatarUrl: sender.avatarUrl,
     own,
+    images,
   };
 }
 
@@ -234,29 +247,36 @@ export async function listConversations(userId: number, limit: number = 40): Pro
   const partners = new Map(partnerRows.map((user) => [user.id, user]));
   const unread = new Map(unreadRows.map((row) => [row.conversationId, row.n]));
 
+  const lastByConversation = new Map(rows.map((row) => [row.id, db
+    .select({
+      id: privateMessages.id,
+      senderId: privateMessages.senderId,
+      body: privateMessages.body,
+      createdAt: privateMessages.createdAt,
+    })
+    .from(privateMessages)
+    .where(eq(privateMessages.conversationId, row.id))
+    .orderBy(desc(privateMessages.id))
+    .limit(1)
+    .get() ?? null]));
+  const imageMap = await privateMessageImagesById(
+    [...lastByConversation.values()].flatMap((message) => message ? [message.id] : []),
+  );
   return rows.flatMap((row) => {
     const partnerId = row.userLowId === userId ? row.userHighId : row.userLowId;
     const partner = partners.get(partnerId);
     if (!partner) return [];
-    const lastMessage = db
-      .select({
-        id: privateMessages.id,
-        senderId: privateMessages.senderId,
-        body: privateMessages.body,
-        createdAt: privateMessages.createdAt,
-      })
-      .from(privateMessages)
-      .where(eq(privateMessages.conversationId, row.id))
-      .orderBy(desc(privateMessages.id))
-      .limit(1)
-      .get() ?? null;
+    const lastMessage = lastByConversation.get(row.id) ?? null;
     return [{
       kind: "direct" as const,
       id: row.id,
       partner,
       updatedAt: row.updatedAt,
       unreadCount: unread.get(row.id) ?? 0,
-      lastMessage,
+      lastMessage: lastMessage ? {
+        ...lastMessage,
+        images: imageMap.get(lastMessage.id) ?? [],
+      } : null,
     }];
   });
 }
@@ -343,7 +363,14 @@ export async function getMessageThread(
     .limit(pageSize + 1);
   const hasOlder = rows.length > pageSize;
   const page = rows.slice(0, pageSize).reverse();
-  const messages = page.map((row) => toMessage(row, currentUserId, currentUser, partner));
+  const imageMap = await privateMessageImagesById(page.map((row) => row.id));
+  const messages = page.map((row) => toMessage(
+    row,
+    currentUserId,
+    currentUser,
+    partner,
+    imageMap.get(row.id) ?? [],
+  ));
   return {
     conversationId: conversation.id,
     partner,
@@ -378,9 +405,16 @@ export async function getMessageUpdates(
     ))
     .orderBy(privateMessages.id)
     .limit(100);
+  const imageMap = await privateMessageImagesById(rows.map((row) => row.id));
   return {
     partner,
-    messages: rows.map((row) => toMessage(row, currentUserId, currentUser, partner)),
+    messages: rows.map((row) => toMessage(
+      row,
+      currentUserId,
+      currentUser,
+      partner,
+      imageMap.get(row.id) ?? [],
+    )),
     readThroughId: await readThroughId(conversation.id, currentUserId),
   };
 }
@@ -389,8 +423,9 @@ export async function sendPrivateMessage(
   senderId: number,
   peerUsername: string,
   rawBody: string,
+  images: PreparedMessageImage[] = [],
 ): Promise<SendMessageResult> {
-  const prepared = prepareMessageBody(rawBody);
+  const prepared = prepareMessageBody(rawBody, images.length > 0);
   if (!prepared.ok) return { ok: false, error: prepared.error, status: 400 };
   const body = prepared.body;
 
@@ -461,11 +496,21 @@ export async function sendPrivateMessage(
       .returning()
       .get();
     if (!message) throw new Error("Не удалось сохранить сообщение");
+    const imageRows = images.map((image, position) => {
+      const row = tx.insert(messageImages).values({
+        privateMessageId: message.id,
+        position,
+        ...image,
+        createdAt: now,
+      }).returning().get();
+      if (!row) throw new Error("Не удалось сохранить изображение сообщения");
+      return row;
+    });
     tx.update(messageConversations)
       .set({ updatedAt: now })
       .where(eq(messageConversations.id, conversation.id))
       .run();
-    return { conversationId: conversation.id, message };
+    return { conversationId: conversation.id, message, images: imageRows };
   });
 
   publishMessageEvent(senderId, {
@@ -483,6 +528,12 @@ export async function sendPrivateMessage(
     ok: true,
     conversationId: inserted.conversationId,
     partner,
-    message: toMessage(inserted.message, senderId, sender, partner),
+    message: toMessage(
+      inserted.message,
+      senderId,
+      sender,
+      partner,
+      inserted.images.map(apiMessageImage),
+    ),
   };
 }

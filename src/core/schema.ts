@@ -225,7 +225,7 @@ export const messageConversations = sqliteTable("message_conversations", {
   check("message_conversations_order_check", sql`${t.userLowId} < ${t.userHighId}`),
 ]);
 
-/** Сообщения хранят только обычный текст; HTML из личной переписки не исполняется. */
+/** Сообщения хранят только обычный текст; пустой body допустим у сообщения с изображением. */
 export const privateMessages = sqliteTable("private_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   conversationId: integer("conversation_id").notNull().references(() => messageConversations.id, { onDelete: "cascade" }),
@@ -239,7 +239,7 @@ export const privateMessages = sqliteTable("private_messages", {
   index("private_messages_recipient_read_idx").on(t.recipientId, t.readAt, t.id),
   index("private_messages_sender_created_idx").on(t.senderId, t.createdAt),
   check("private_messages_users_check", sql`${t.senderId} <> ${t.recipientId}`),
-  check("private_messages_body_check", sql`length(${t.body}) between 1 and 4000`),
+  check("private_messages_body_check", sql`length(${t.body}) between 0 and 4000`),
 ]);
 
 /** Групповой чат. Владелец управляет составом и не может покинуть чат без удаления. */
@@ -279,7 +279,32 @@ export const messageGroupMessages = sqliteTable("message_group_messages", {
 }, (t) => [
   index("message_group_messages_group_idx").on(t.groupId, t.id),
   index("message_group_messages_sender_created_idx").on(t.senderId, t.createdAt),
-  check("message_group_messages_body_check", sql`length(${t.body}) between 1 and 4000`),
+  check("message_group_messages_body_check", sql`length(${t.body}) between 0 and 4000`),
+]);
+
+/** Защищённые изображения личных и групповых сообщений лежат вне public/. */
+export const messageImages = sqliteTable("message_images", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  privateMessageId: integer("private_message_id").references(() => privateMessages.id, { onDelete: "cascade" }),
+  groupMessageId: integer("group_message_id").references(() => messageGroupMessages.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  storageKey: text("storage_key").notNull().unique(),
+  thumbnailKey: text("thumbnail_key").notNull().unique(),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  mimeType: text("mime_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+}, (t) => [
+  index("message_images_private_idx").on(t.privateMessageId, t.position),
+  index("message_images_group_idx").on(t.groupMessageId, t.position),
+  check(
+    "message_images_owner_check",
+    sql`(${t.privateMessageId} is not null and ${t.groupMessageId} is null) or (${t.privateMessageId} is null and ${t.groupMessageId} is not null)`,
+  ),
+  check("message_images_position_check", sql`${t.position} between 0 and 9`),
+  check("message_images_dimensions_check", sql`${t.width} > 0 and ${t.height} > 0`),
+  check("message_images_size_check", sql`${t.sizeBytes} > 0 and ${t.sizeBytes} <= 20971520`),
 ]);
 
 export const modLog = sqliteTable("mod_log", {

@@ -1,6 +1,12 @@
+import { dirname, join } from "node:path";
+
+const dbPath = process.env.DB_PATH ?? "./musorbox.db";
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
-  dbPath: process.env.DB_PATH ?? "./musorbox.db",
+  dbPath,
+  messageMediaRoot: process.env.MESSAGE_MEDIA_ROOT
+    ?? (process.env.DB_PATH ? join(dirname(dbPath), "message-media") : "./data/message-media"),
   sessionSecret: process.env.SESSION_SECRET ?? "dev-secret-change-me",
   sessionTtlDays: 7,
   pageSize: Number(process.env.PAGE_SIZE ?? 20),
