@@ -88,6 +88,11 @@ app.post("/telegram-bot-api/*", async (c) => {
         log(`long polling запущен для @${bot.username} (timeout=${timeout}s, offset=${offset})`);
       }
       const updates = await getBotUpdates(bot.userId, offset, timeout, c.req.raw.signal);
+      // Замена или отзыв токена будит long polling; старый in-flight запрос не должен получить updates.
+      if (!await authenticateMessageBot(token!)) {
+        console.warn(`[bot-api] #${requestId} getUpdates: токен @${bot.username} отозван во время ожидания`);
+        return telegramError(c, 401, "Unauthorized: bot token was revoked");
+      }
       if (updates.length) {
         const first = updates[0]!.update_id;
         const last = updates.at(-1)!.update_id;

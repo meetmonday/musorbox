@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { getDrizzle } from "../core/db";
 import {
   messageBots,
@@ -55,7 +55,11 @@ export function deliverPrivateMessageToBot(
     username: users.username,
   }).from(messageBots)
     .innerJoin(users, eq(users.id, messageBots.userId))
-    .where(and(eq(messageBots.userId, message.recipientId), eq(users.banned, false)))
+    .where(and(
+      eq(messageBots.userId, message.recipientId),
+      isNull(messageBots.disabledAt),
+      eq(users.banned, false),
+    ))
     .get();
   if (!bot) return;
   const sender = db.select(userSelection).from(users).where(eq(users.id, message.senderId)).get();
@@ -96,6 +100,7 @@ export function deliverGroupMessageToBots(
     .where(and(
       eq(messageGroupMembers.groupId, groupId),
       ne(messageGroupMembers.userId, message.senderId),
+      isNull(messageBots.disabledAt),
       eq(users.banned, false),
     ))
     .all();

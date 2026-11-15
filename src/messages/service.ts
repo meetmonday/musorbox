@@ -15,6 +15,7 @@ import {
 import { getDrizzle } from "../core/db";
 import {
   messageConversations,
+  messageBots,
   messageGroupMembers,
   messageGroupMessages,
   messageImages,
@@ -171,7 +172,10 @@ export async function getMessageUserByUsername(username: string): Promise<Messag
 }
 
 export async function isRealMessageUser(userId: number): Promise<boolean> {
-  return Boolean(await getMessageUserById(userId));
+  if (!await getMessageUserById(userId)) return false;
+  const bot = getDrizzle().select({ disabledAt: messageBots.disabledAt })
+    .from(messageBots).where(eq(messageBots.userId, userId)).get();
+  return !bot || bot.disabledAt === null;
 }
 
 async function findConversation(firstId: number, secondId: number) {
@@ -322,7 +326,12 @@ export async function searchMessageUsers(
     .select(userSelection)
     .from(users)
     .leftJoin(tgUsers, eq(tgUsers.userId, users.id))
-    .where(and(where, isNull(tgUsers.userId)))
+    .leftJoin(messageBots, eq(messageBots.userId, users.id))
+    .where(and(
+      where,
+      isNull(tgUsers.userId),
+      or(isNull(messageBots.userId), isNull(messageBots.disabledAt)),
+    ))
     .orderBy(desc(users.last_seen_at), users.username)
     .limit(Math.max(1, Math.min(30, limit)));
 }
@@ -437,7 +446,9 @@ export async function sendPrivateMessage(
   if (!sender) return { ok: false, error: "Отправитель не найден. Войдите снова.", status: 400 };
   if (!partner) return { ok: false, error: "Пользователь не найден.", status: 404 };
   if (partner.id === senderId) return { ok: false, error: "Нельзя написать самому себе.", status: 400 };
-  if (partner.banned) return { ok: false, error: "Этому пользователю сейчас нельзя написать.", status: 400 };
+  if (partner.banned || !await isRealMessageUser(partner.id)) {
+    return { ok: false, error: "Этому пользователю сейчас нельзя написать.", status: 400 };
+  }
 
   const db = getDrizzle();
   const since = new Date(Date.now() - 60_000);

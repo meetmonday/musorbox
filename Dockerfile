@@ -16,6 +16,7 @@ RUN bun install --frozen-lockfile --production
 COPY src ./src
 COPY drizzle ./drizzle
 COPY drizzle.config.ts tsconfig.json ./
+COPY BOT_API.md ./BOT_API.md
 
 # cloudflared from the first stage
 COPY --from=cloudflared /usr/local/bin/cloudflared /usr/local/bin/cloudflared

@@ -14,6 +14,10 @@ function wakeBot(botUserId: number): void {
   for (const wake of listeners) wake();
 }
 
+export function wakeBotPoll(botUserId: number): void {
+  wakeBot(botUserId);
+}
+
 export function enqueueBotUpdate(botUserId: number, payload: Record<string, unknown>): number {
   const row = getDrizzle().insert(messageBotUpdates).values({
     botUserId,

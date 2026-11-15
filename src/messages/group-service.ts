@@ -17,6 +17,7 @@ import {
   messageGroupMembers,
   messageGroupMessages,
   messageGroups,
+  messageBots,
   messageImages,
   privateMessages,
   tgUsers,
@@ -359,7 +360,12 @@ export async function createGroupChat(
     .select({ id: users.id, username: users.username, banned: users.banned })
     .from(users)
     .leftJoin(tgUsers, eq(tgUsers.userId, users.id))
-    .where(and(inArray(users.username, usernames), isNull(tgUsers.userId))) : [];
+    .leftJoin(messageBots, eq(messageBots.userId, users.id))
+    .where(and(
+      inArray(users.username, usernames),
+      isNull(tgUsers.userId),
+      or(isNull(messageBots.userId), isNull(messageBots.disabledAt)),
+    )) : [];
   const byName = new Map(invited.map((user) => [user.username, user]));
   const unavailable = usernames.filter((name) => !byName.get(name) || byName.get(name)!.banned);
   if (unavailable.length) {
@@ -478,7 +484,12 @@ export async function addGroupMember(ownerId: number, groupId: number, username:
   if (group.ownerId !== ownerId) return { ok: false, error: "Добавлять участников может только владелец группы.", status: 403 };
   const target = await db.select({ id: users.id, banned: users.banned }).from(users)
     .leftJoin(tgUsers, eq(tgUsers.userId, users.id))
-    .where(and(eq(users.username, username.trim()), isNull(tgUsers.userId))).get();
+    .leftJoin(messageBots, eq(messageBots.userId, users.id))
+    .where(and(
+      eq(users.username, username.trim()),
+      isNull(tgUsers.userId),
+      or(isNull(messageBots.userId), isNull(messageBots.disabledAt)),
+    )).get();
   if (!target || target.banned) return { ok: false, error: "Пользователь не найден или недоступен.", status: 400 };
   const memberCount = await db.select({ n: count() }).from(messageGroupMembers)
     .where(eq(messageGroupMembers.groupId, groupId)).get();

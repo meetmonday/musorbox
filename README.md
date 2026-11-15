@@ -22,6 +22,8 @@
 - RSS-ленты (`/feed_topics/:channel`)
 - Публичный JSON API для автоматизации: постоянный токен создаётся в настройках профиля,
   эндпоинты и примеры — в [API.md](API.md)
+- Пользовательские боты для чатов Musorgram: создание и токены — `/settings/bots`,
+  особенности Telegram-совместимого интерфейса — в [BOT_API.md](BOT_API.md)
 
 Поиск доступен из шапки и по адресу `/public/search/?string=запрос`.
 Ищется буквальное вхождение фразы: `%` и `_` не являются шаблонами.
@@ -71,6 +73,8 @@ bun run dev     # http://localhost:3000
 | `bun run db:studio`      | Открыть Drizzle Studio                |
 | `bun run typecheck`      | Проверка типов                        |
 | `bun run seed`           | Наполнить демо-данными                |
+| `bun run bot:create --username system_bot --name "System Bot"` | Создать системного бота без владельца |
+| `bun run bot:rotate --username system_bot` | Заменить токен системного бота |
 
 ## Переменные окружения
 
@@ -82,6 +86,7 @@ bun run dev     # http://localhost:3000
 | `SESSION_SECRET`   | `dev-secret-...`  | Секрет сессий (сменить!)    |
 | `PAGE_SIZE`        | `20`              | Топиков на страницу         |
 | `MAIN_PAGE_SIZE`   | `10`              | Топиков на главной          |
+| `BOT_API_DEBUG`    | выключен          | Подробные логи long polling |
 
 ## Структура
 
@@ -102,6 +107,7 @@ src/
   sidebar/         # виджеты сайдбара
   activitypub/     # федерация (ActivityPub)
   telegram/        # зеркалирование в Telegram: client, format, mirror, receive, media
+  bot-api/         # Telegram-совместимые боты Musorgram и управление ими
 ```
 
 ## Запуск в Docker (с Cloudflare Tunnel)

@@ -78,10 +78,16 @@ export const messageBots = sqliteTable(
     userId: integer("user_id")
       .primaryKey()
       .references(() => users.id, { onDelete: "cascade" }),
+    ownerUserId: integer("owner_user_id")
+      .references(() => users.id, { onDelete: "set null" }),
     tokenHash: text("token_hash").notNull(),
+    disabledAt: integer("disabled_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("message_bots_token_hash_idx").on(t.tokenHash)],
+  (t) => [
+    uniqueIndex("message_bots_token_hash_idx").on(t.tokenHash),
+    index("message_bots_owner_idx").on(t.ownerUserId, t.createdAt),
+  ],
 );
 
 /** Долговременная очередь getUpdates. Payload не содержит update_id: им служит id строки. */

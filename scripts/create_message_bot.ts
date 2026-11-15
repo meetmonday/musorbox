@@ -10,7 +10,9 @@ const fullName = argument("name");
 const rotate = Bun.argv.includes("--rotate");
 
 if (!username) {
-  console.error("Использование: bun run bot:create --username trashkek_bot --name 'Trashkek'");
+  console.error(rotate
+    ? "Использование: bun run bot:rotate --username trashkek_bot"
+    : "Использование: bun run bot:create --username trashkek_bot --name 'Trashkek'");
   process.exit(1);
 }
 
@@ -25,6 +27,6 @@ try {
   console.log("BOT_API_BASE_URL=http://localhost:3000/telegram-bot-api/bot");
   console.log(`[bot-api] Добавьте @${bot.username} в группу через форму «Добавить по логину».`);
 } catch (error) {
-  console.error("[bot-api] Не удалось создать бота:", error instanceof Error ? error.message : error);
+  console.error(`[bot-api] Не удалось ${rotate ? "заменить токен" : "создать бота"}:`, error instanceof Error ? error.message : error);
   process.exit(1);
 }

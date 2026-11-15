@@ -22,6 +22,7 @@ import apiRoutes from "./api/routes";
 import apiSettingsRoutes from "./api/settings";
 import telegramRoutes from "./telegram/routes";
 import botApiRoutes from "./bot-api/routes";
+import botApiSettingsRoutes from "./bot-api/settings";
 
 type AppEnv = {
   Variables: UserContext;
@@ -57,6 +58,7 @@ app.route("/", apiRoutes);
 app.route("/", apiSettingsRoutes);
 app.route("/", telegramRoutes);
 app.route("/", botApiRoutes);
+app.route("/", botApiSettingsRoutes);
 app.route("/", topicsRoutes);
 app.route("/", authRoutes);
 app.route("/", forumRoutes);

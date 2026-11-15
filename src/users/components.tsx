@@ -112,6 +112,7 @@ export const SettingsPage: FC<{
       <h1 class="h_page_header">Настройки профиля</h1>
       <p><a href={`/users/${profile.username}/`}>Вернуться в профиль</a></p>
       <p><a href="/settings/api">Токен для публичного API</a></p>
+      <p><a href="/settings/bots">Мои боты и Bot API</a></p>
       {error ? <div style="color:#EE0000;margin-bottom:10px" role="alert">{error}</div> : null}
       {saved ? <div class="div_block" role="status">Профиль сохранён.</div> : null}
       <div class="div_block">
