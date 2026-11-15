@@ -77,6 +77,13 @@ const messengerStyles = `
   #messages_app .messages-message-head a { font-weight:bold; }
   #messages_app .messages-message-avatar { width:20px; height:20px; margin:-2px 6px 0 0; object-fit:cover; vertical-align:middle; }
   #messages_app .messages-message-time { float:right; padding-left:8px; color:#999; font:9px Arial,sans-serif; }
+  #messages_app .messages-message-images { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:3px; max-width:520px; margin:2px 0 7px; padding:3px; background:#fff; border:1px solid #d4d4d4; }
+  #messages_app .messages-message-images--single { display:block; }
+  #messages_app .messages-message-images--odd > a:last-child { grid-column:1 / -1; }
+  #messages_app .messages-message-image { display:block; min-width:0; background:#ddd; line-height:0; overflow:hidden; }
+  #messages_app .messages-message-image:hover { outline:3px solid #1fb6f2; outline-offset:-3px; }
+  #messages_app .messages-message-image img { display:block; width:100%; height:160px; object-fit:cover; }
+  #messages_app .messages-message-images--single img { height:auto; max-height:460px; object-fit:contain; }
   #messages_app .messages-message-body { white-space:pre-wrap; line-height:1.55; font-size:12px; }
   #messages_app .messages-message-state { padding-top:5px; color:#999; font:9px Arial,sans-serif; text-align:right; }
   #messages_app .messages-message-state--read { color:#1b93c2; }
@@ -125,6 +132,8 @@ const messengerStyles = `
     #messages_app .messages-message--own { margin-left:0; margin-right:0; }
     #messages_app .messages-thread-head { padding-right:90px; }
     #messages_app .messages-thread-back { display:block; right:8px; }
+    #messages_app .messages-message-image img { height:120px; }
+    #messages_app .messages-message-images--single img { height:auto; max-height:70vh; }
   }
   @media (prefers-reduced-motion:reduce) {
     #messages_app * { scroll-behavior:auto !important; }
@@ -366,7 +375,9 @@ const ConversationLink: FC<{
       </span>
       <span class="messages-conversation-preview">
         {prefix}
-        {lastMessage ? previewText(lastMessage.body) : isGroup ? `${item.memberCount} участников` : "Диалог начат"}
+        {lastMessage
+          ? previewText(lastMessage.body) || (lastMessage.images.length === 1 ? "Фотография" : `${lastMessage.images.length} фото`)
+          : isGroup ? `${item.memberCount} участников` : "Диалог начат"}
       </span>
       <span class="messages-conversation-time">{shortDate(lastMessage?.createdAt ?? item.updatedAt)}</span>
       {item.unreadCount ? (
@@ -395,7 +406,37 @@ export const MessageItemView: FC<{ message: MessageListItem }> = ({ message }) =
         {formatDateDots(message.createdAt)}
       </time>
     </div>
-    <div class="messages-message-body">{message.body}</div>
+    {message.images.length ? (
+      <div
+        class={[
+          "messages-message-images",
+          message.images.length === 1 ? "messages-message-images--single" : "",
+          message.images.length > 1 && message.images.length % 2 === 1 ? "messages-message-images--odd" : "",
+        ].filter(Boolean).join(" ")}
+        aria-label={message.images.length === 1 ? "Фотография" : `Альбом: ${message.images.length} фото`}
+      >
+        {message.images.map((image, index) => (
+          <a
+            key={image.id}
+            class="messages-message-image"
+            href={`/messages/media/${image.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Открыть изображение ${index + 1} из ${message.images.length}`}
+          >
+            <img
+              src={`/messages/media/${image.id}?size=thumb`}
+              width={image.width}
+              height={image.height}
+              loading="lazy"
+              decoding="async"
+              alt=""
+            />
+          </a>
+        ))}
+      </div>
+    ) : null}
+    {message.body ? <div class="messages-message-body">{message.body}</div> : null}
     {message.own ? (
       <div class={`messages-message-state${message.readAt ? " messages-message-state--read" : ""}`}>
         {message.readAt ? "Прочитано" : "Отправлено"}

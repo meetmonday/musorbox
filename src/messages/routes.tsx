@@ -40,6 +40,7 @@ import {
   sendGroupMessage,
 } from "./group-service";
 import type { GroupThread } from "./group-service";
+import { openMessageImage } from "./media";
 
 type AppContext = Context<{ Variables: UserContext }>;
 
@@ -211,6 +212,20 @@ async function renderGroupManagementError(
 app.get("/messages", async (c) => {
   const query = String(c.req.query("q") ?? "");
   return renderMessenger(c, { query });
+});
+
+app.get("/messages/media/:id", async (c) => {
+  const imageId = positiveId(c.req.param("id"));
+  const size = c.req.query("size");
+  if (!imageId || (size !== undefined && size !== "thumb")) return c.notFound();
+  const media = await openMessageImage(imageId, c.get("user")!.id, size === "thumb");
+  if (!media) return c.notFound();
+  c.header("Content-Type", media.mimeType);
+  c.header("Content-Length", String(media.file.size));
+  c.header("Content-Disposition", "inline");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Cache-Control", "private, no-store");
+  return c.body(media.file.stream());
 });
 
 app.get("/messages/groups/new", (c) => renderGroupCreate(c));
