@@ -33,6 +33,7 @@ import {
 } from "./media";
 import type { ApiMessageImage, PreparedMessageImage } from "./media";
 import { deliverGroupMessageToBots } from "../bot-api/delivery";
+import { storedBotReplyMarkup } from "./bot-markup";
 
 const MAX_GROUP_MEMBERS = 50;
 const SENDS_PER_MINUTE = 30;
@@ -103,6 +104,7 @@ const groupMessageSelection = {
   groupId: messageGroupMessages.groupId,
   senderId: messageGroupMessages.senderId,
   body: messageGroupMessages.body,
+  replyMarkup: messageGroupMessages.replyMarkup,
   createdAt: messageGroupMessages.createdAt,
   senderUsername: users.username,
   senderAvatarUrl: users.avatarUrl,
@@ -113,6 +115,7 @@ function toMessage(
     id: number;
     senderId: number | null;
     body: string;
+    replyMarkup: string | null;
     createdAt: Date;
     senderUsername: string | null;
     senderAvatarUrl: string | null;
@@ -121,6 +124,7 @@ function toMessage(
   images: ApiMessageImage[] = [],
 ): MessageListItem {
   return {
+    scope: "group",
     id: row.id,
     senderId: row.senderId,
     body: row.body,
@@ -130,6 +134,7 @@ function toMessage(
     senderAvatarUrl: row.senderAvatarUrl,
     own: row.senderId === currentUserId,
     images,
+    replyMarkup: storedBotReplyMarkup(row.replyMarkup),
   };
 }
 
@@ -403,6 +408,7 @@ export async function sendGroupMessage(
   groupId: number,
   rawBody: string,
   images: PreparedMessageImage[] = [],
+  replyMarkup: string | null = null,
 ): Promise<SendGroupMessageResult> {
   const prepared = prepareMessageBody(rawBody, images.length > 0);
   if (!prepared.ok) return { ok: false, error: prepared.error, status: 400 };
@@ -434,7 +440,7 @@ export async function sendGroupMessage(
   const inserted = db.transaction((tx) => {
     const message = tx
       .insert(messageGroupMessages)
-      .values({ groupId, senderId, body: prepared.body, createdAt: now })
+      .values({ groupId, senderId, body: prepared.body, replyMarkup, createdAt: now })
       .returning()
       .get();
     if (!message) throw new Error("Не удалось сохранить сообщение группы");

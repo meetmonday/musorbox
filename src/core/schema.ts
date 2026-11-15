@@ -265,6 +265,7 @@ export const privateMessages = sqliteTable("private_messages", {
   senderId: integer("sender_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   recipientId: integer("recipient_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   body: text("body").notNull(),
+  replyMarkup: text("reply_markup"),
   readAt: integer("read_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
 }, (t) => [
@@ -308,6 +309,7 @@ export const messageGroupMessages = sqliteTable("message_group_messages", {
   groupId: integer("group_id").notNull().references(() => messageGroups.id, { onDelete: "cascade" }),
   senderId: integer("sender_id").references(() => users.id, { onDelete: "set null" }),
   body: text("body").notNull(),
+  replyMarkup: text("reply_markup"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
 }, (t) => [
   index("message_group_messages_group_idx").on(t.groupId, t.id),

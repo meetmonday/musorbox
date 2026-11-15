@@ -30,6 +30,8 @@ import {
 } from "./media";
 import type { ApiMessageImage, PreparedMessageImage } from "./media";
 import { deliverPrivateMessageToBot } from "../bot-api/delivery";
+import { storedBotReplyMarkup } from "./bot-markup";
+import type { BotInlineKeyboardMarkup } from "./bot-markup";
 
 export const MESSAGE_MAX_LENGTH = 4000;
 const SENDS_PER_MINUTE = 30;
@@ -44,6 +46,7 @@ export type MessageUser = {
 };
 
 export type MessageListItem = {
+  scope: "private" | "group";
   id: number;
   senderId: number | null;
   recipientId?: number;
@@ -54,6 +57,7 @@ export type MessageListItem = {
   senderAvatarUrl: string | null;
   own: boolean;
   images: ApiMessageImage[];
+  replyMarkup: BotInlineKeyboardMarkup | null;
 };
 
 export type ConversationListItem = {
@@ -138,6 +142,7 @@ function toMessage(
   const own = row.senderId === currentUserId;
   const sender = own ? currentUser : partner;
   return {
+    scope: "private",
     id: row.id,
     senderId: row.senderId,
     recipientId: row.recipientId,
@@ -148,6 +153,7 @@ function toMessage(
     senderAvatarUrl: sender.avatarUrl,
     own,
     images,
+    replyMarkup: storedBotReplyMarkup(row.replyMarkup),
   };
 }
 
@@ -434,6 +440,7 @@ export async function sendPrivateMessage(
   peerUsername: string,
   rawBody: string,
   images: PreparedMessageImage[] = [],
+  replyMarkup: string | null = null,
 ): Promise<SendMessageResult> {
   const prepared = prepareMessageBody(rawBody, images.length > 0);
   if (!prepared.ok) return { ok: false, error: prepared.error, status: 400 };
@@ -503,6 +510,7 @@ export async function sendPrivateMessage(
         senderId,
         recipientId: partner.id,
         body,
+        replyMarkup,
         createdAt: now,
       })
       .returning()

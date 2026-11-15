@@ -1,10 +1,22 @@
 import { and, eq, or } from "drizzle-orm";
 import { getDrizzle } from "../core/db";
-import { messageBots, messageConversations, messageGroups, users } from "../core/schema";
+import {
+  messageBots,
+  messageConversations,
+  messageGroupMembers,
+  messageGroupMessages,
+  messageGroups,
+  messageImages,
+  privateMessages,
+  users,
+} from "../core/schema";
 import { sendGroupMessage } from "../messages/group-service";
 import { sendPrivateMessage } from "../messages/service";
 import { cleanupMessageImages, MessageImageError, prepareMessageImages } from "../messages/media";
 import type { ApiMessageImage } from "../messages/media";
+import { publishMessageEvent } from "../messages/realtime";
+import { normalizeBotReplyMarkup, serializedBotReplyMarkup } from "../messages/bot-markup";
+import type { BotInlineKeyboardMarkup } from "../messages/bot-markup";
 import type { MessageBot } from "./service";
 import type { MediaGroupInput, TelegramMediaItem } from "./media";
 import {
@@ -12,6 +24,7 @@ import {
   telegramBotUser,
   telegramGroupChat,
   telegramPrivateChat,
+  telegramUser,
   unixTime,
 } from "./telegram";
 import type { TelegramMessage } from "./telegram";
@@ -90,6 +103,35 @@ function text(value: unknown): string {
   return value;
 }
 
+function positiveInteger(value: unknown, name: string): number {
+  const parsed = typeof value === "number" ? value
+    : typeof value === "string" && /^\d+$/.test(value) ? Number(value)
+      : NaN;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new BotMethodError(400, `Bad Request: ${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function jsonArray(value: unknown): Array<Record<string, unknown>> | undefined {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value) as unknown;
+    } catch {
+      return undefined;
+    }
+  }
+  return Array.isArray(value) ? value as Array<Record<string, unknown>> : undefined;
+}
+
+function replyMarkup(value: unknown): BotInlineKeyboardMarkup | null {
+  try {
+    return normalizeBotReplyMarkup(value);
+  } catch (error) {
+    throw new BotMethodError(400, `Bad Request: ${error instanceof Error ? error.message : "invalid reply_markup"}`);
+  }
+}
+
 function outgoingMessage(
   id: number,
   createdAt: Date,
@@ -97,6 +139,7 @@ function outgoingMessage(
   bot: MessageBot,
   chat: TelegramMessage["chat"],
   entities: unknown,
+  markup: BotInlineKeyboardMarkup | null,
 ): TelegramMessage {
   return {
     message_id: id,
@@ -104,7 +147,8 @@ function outgoingMessage(
     from: telegramBotUser(bot),
     chat,
     text: body,
-    entities: Array.isArray(entities) ? entities as Array<Record<string, unknown>> : undefined,
+    entities: jsonArray(entities),
+    reply_markup: markup ?? undefined,
   };
 }
 
@@ -114,8 +158,10 @@ export async function sendBotMessage(
 ): Promise<TelegramMessage> {
   const destination = resolveBotChat(bot, params.chat_id);
   const body = text(params.text);
+  const markup = replyMarkup(params.reply_markup);
+  const storedMarkup = serializedBotReplyMarkup(markup);
   if (destination.kind === "private") {
-    const result = await sendPrivateMessage(bot.userId, destination.target.username, body);
+    const result = await sendPrivateMessage(bot.userId, destination.target.username, body, [], storedMarkup);
     if (!result.ok) throw new BotMethodError(result.status, result.error);
     return outgoingMessage(
       result.message.id,
@@ -124,9 +170,10 @@ export async function sendBotMessage(
       bot,
       destination.chat,
       params.entities,
+      markup,
     );
   }
-  const result = await sendGroupMessage(bot.userId, destination.group.id, body);
+  const result = await sendGroupMessage(bot.userId, destination.group.id, body, [], storedMarkup);
   if (!result.ok) throw new BotMethodError(result.status, result.error);
   return outgoingMessage(
     result.message.id,
@@ -135,7 +182,129 @@ export async function sendBotMessage(
     bot,
     destination.chat,
     params.entities,
+    markup,
   );
+}
+
+function requireGroupMembership(botUserId: number, groupId: number): void {
+  const member = getDrizzle().select({ userId: messageGroupMembers.userId })
+    .from(messageGroupMembers)
+    .where(and(eq(messageGroupMembers.groupId, groupId), eq(messageGroupMembers.userId, botUserId)))
+    .get();
+  if (!member) throw new BotMethodError(403, "Forbidden: bot is not a member of the group chat");
+}
+
+export function deleteBotMessage(bot: MessageBot, params: Record<string, unknown>): void {
+  const destination = resolveBotChat(bot, params.chat_id);
+  const messageId = positiveInteger(params.message_id, "message_id");
+  const db = getDrizzle();
+  if (destination.kind === "private") {
+    const message = db.select({
+      id: privateMessages.id,
+      senderId: privateMessages.senderId,
+      recipientId: privateMessages.recipientId,
+    }).from(privateMessages).where(and(
+      eq(privateMessages.id, messageId),
+      or(
+        and(eq(privateMessages.senderId, bot.userId), eq(privateMessages.recipientId, destination.target.id)),
+        and(eq(privateMessages.senderId, destination.target.id), eq(privateMessages.recipientId, bot.userId)),
+      ),
+    )).get();
+    if (!message) throw new BotMethodError(400, "Bad Request: message to delete not found");
+    const images = db.select({ storageKey: messageImages.storageKey, thumbnailKey: messageImages.thumbnailKey })
+      .from(messageImages).where(eq(messageImages.privateMessageId, messageId)).all();
+    db.delete(privateMessages).where(eq(privateMessages.id, messageId)).run();
+    cleanupMessageImages(images);
+    publishMessageEvent(bot.userId, { type: "delete", peerId: destination.target.id, messageId });
+    publishMessageEvent(destination.target.id, { type: "delete", peerId: bot.userId, messageId });
+    return;
+  }
+
+  requireGroupMembership(bot.userId, destination.group.id);
+  const message = db.select({ id: messageGroupMessages.id })
+    .from(messageGroupMessages)
+    .where(and(eq(messageGroupMessages.id, messageId), eq(messageGroupMessages.groupId, destination.group.id)))
+    .get();
+  if (!message) throw new BotMethodError(400, "Bad Request: message to delete not found");
+  const images = db.select({ storageKey: messageImages.storageKey, thumbnailKey: messageImages.thumbnailKey })
+    .from(messageImages).where(eq(messageImages.groupMessageId, messageId)).all();
+  db.delete(messageGroupMessages).where(eq(messageGroupMessages.id, messageId)).run();
+  cleanupMessageImages(images);
+  const members = db.select({ userId: messageGroupMembers.userId }).from(messageGroupMembers)
+    .where(eq(messageGroupMembers.groupId, destination.group.id)).all();
+  for (const member of members) {
+    publishMessageEvent(member.userId, { type: "delete", groupId: destination.group.id, messageId });
+  }
+}
+
+export function editBotMessageReplyMarkup(
+  bot: MessageBot,
+  params: Record<string, unknown>,
+): TelegramMessage {
+  const destination = resolveBotChat(bot, params.chat_id);
+  const messageId = positiveInteger(params.message_id, "message_id");
+  const markup = replyMarkup(params.reply_markup);
+  const storedMarkup = serializedBotReplyMarkup(markup);
+  const db = getDrizzle();
+  if (destination.kind === "private") {
+    const updated = db.update(privateMessages).set({ replyMarkup: storedMarkup }).where(and(
+      eq(privateMessages.id, messageId),
+      eq(privateMessages.senderId, bot.userId),
+      eq(privateMessages.recipientId, destination.target.id),
+    )).returning().get();
+    if (!updated) throw new BotMethodError(400, "Bad Request: message to edit not found");
+    publishMessageEvent(destination.target.id, { type: "edit", peerId: bot.userId, messageId });
+    return outgoingMessage(
+      updated.id,
+      updated.createdAt,
+      updated.body,
+      bot,
+      destination.chat,
+      undefined,
+      markup,
+    );
+  }
+
+  requireGroupMembership(bot.userId, destination.group.id);
+  const updated = db.update(messageGroupMessages).set({ replyMarkup: storedMarkup }).where(and(
+    eq(messageGroupMessages.id, messageId),
+    eq(messageGroupMessages.groupId, destination.group.id),
+    eq(messageGroupMessages.senderId, bot.userId),
+  )).returning().get();
+  if (!updated) throw new BotMethodError(400, "Bad Request: message to edit not found");
+  const members = db.select({ userId: messageGroupMembers.userId }).from(messageGroupMembers)
+    .where(eq(messageGroupMembers.groupId, destination.group.id)).all();
+  for (const member of members) {
+    publishMessageEvent(member.userId, { type: "edit", groupId: destination.group.id, messageId });
+  }
+  return outgoingMessage(
+    updated.id,
+    updated.createdAt,
+    updated.body,
+    bot,
+    destination.chat,
+    undefined,
+    markup,
+  );
+}
+
+export function getBotChatAdministrators(
+  bot: MessageBot,
+  params: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+  const destination = resolveBotChat(bot, params.chat_id);
+  if (destination.kind !== "group") throw new BotMethodError(400, "Bad Request: chat is not a group");
+  requireGroupMembership(bot.userId, destination.group.id);
+  const owner = getDrizzle().select({
+    id: users.id,
+    username: users.username,
+    fullName: users.fullName,
+  }).from(messageGroups)
+    .innerJoin(users, eq(users.id, messageGroups.ownerId))
+    .where(eq(messageGroups.id, destination.group.id))
+    .get();
+  if (!owner) throw new BotMethodError(404, "Bad Request: chat not found");
+  return [{ status: "creator", user: telegramUser(owner), is_anonymous: false }];
 }
 
 function mediaMessages(

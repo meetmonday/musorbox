@@ -1,4 +1,5 @@
 import type { MessageBot } from "./service";
+import type { BotInlineKeyboardMarkup } from "../messages/bot-markup";
 
 const GROUP_CHAT_ID_BASE = 1_000_000_000_000;
 
@@ -34,6 +35,7 @@ export type TelegramMessage = {
     height: number;
     file_size: number;
   }>;
+  reply_markup?: BotInlineKeyboardMarkup;
 };
 
 export function telegramUser(user: {

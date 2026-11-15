@@ -41,6 +41,7 @@ import {
 } from "./group-service";
 import type { GroupThread } from "./group-service";
 import { openMessageImage } from "./media";
+import { submitBotCallback } from "../bot-api/callbacks";
 
 type AppContext = Context<{ Variables: UserContext }>;
 
@@ -57,7 +58,7 @@ function streamEvents(c: AppContext, accepts: (event: MessageRealtimeEvent) => b
   if (!canOpenMessageStream(user.id)) return c.text("Слишком много открытых соединений.", 429);
   c.header("X-Accel-Buffering", "no");
   return streamSSE(c, async (stream) => {
-    const queue: Array<{ type: "message" | "read"; messageId?: number }> = [];
+    const queue: Array<{ type: "message" | "read" | "delete" | "edit"; messageId?: number }> = [];
     let wake: (() => void) | null = null;
     const unsubscribe = subscribeToMessageEvents(user.id, (event) => {
       if (!accepts(event)) return;
@@ -226,6 +227,23 @@ app.get("/messages/media/:id", async (c) => {
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Cache-Control", "private, no-store");
   return c.body(media.file.stream());
+});
+
+app.post("/messages/bot-callback", async (c) => {
+  const body = await c.req.parseBody();
+  const scope = body.scope === "private" || body.scope === "group" ? body.scope : null;
+  const messageId = typeof body.message_id === "string" ? positiveId(body.message_id) : null;
+  const callbackData = typeof body.callback_data === "string" ? body.callback_data : "";
+  if (!scope || !messageId || !callbackData) {
+    return c.json({ ok: false, error: "Некорректная кнопка бота." }, 400);
+  }
+  try {
+    const answer = await submitBotCallback(c.get("user")!.id, scope, messageId, callbackData, c.req.raw.signal);
+    return c.json({ ok: true, text: answer.text });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Не удалось выполнить действие бота.";
+    return c.json({ ok: false, error: message }, 400);
+  }
 });
 
 app.get("/messages/groups/new", (c) => renderGroupCreate(c));

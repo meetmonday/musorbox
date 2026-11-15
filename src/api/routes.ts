@@ -358,7 +358,7 @@ app.get("/api/messages/events", (c) => {
   if (!canOpenMessageStream(user.id)) throw new ApiError(429, "Слишком много открытых realtime-соединений.");
   c.header("X-Accel-Buffering", "no");
   return streamSSE(c, async (stream) => {
-    const queue: Array<{ type: "message" | "read"; peerId?: number; groupId?: number; messageId?: number }> = [];
+    const queue: Array<{ type: "message" | "read" | "delete" | "edit"; peerId?: number; groupId?: number; messageId?: number }> = [];
     let wake: (() => void) | null = null;
     const unsubscribe = subscribeToMessageEvents(user.id, (event) => {
       if (queue.length < 100) queue.push(event);

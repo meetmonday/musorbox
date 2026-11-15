@@ -85,6 +85,12 @@ const messengerStyles = `
   #messages_app .messages-message-image img { display:block; width:100%; height:160px; object-fit:cover; }
   #messages_app .messages-message-images--single img { height:auto; max-height:460px; object-fit:contain; }
   #messages_app .messages-message-body { white-space:pre-wrap; line-height:1.55; font-size:12px; }
+  #messages_app .messages-bot-keyboard { display:flex; flex-direction:column; gap:4px; margin-top:8px; }
+  #messages_app .messages-bot-keyboard-row { display:flex; gap:4px; }
+  #messages_app .messages-bot-keyboard form { display:flex; flex:1 1 0; margin:0; }
+  #messages_app .messages-bot-button { display:block; width:100%; border:1px solid #1698cc; padding:6px 8px; background:#fff; color:#167da6; font:11px Verdana,sans-serif; text-align:center; text-decoration:none; cursor:pointer; }
+  #messages_app .messages-bot-button:hover { background:#1fb6f2; color:#fff; }
+  #messages_app .messages-bot-button:disabled { border-color:#aaa; color:#999; cursor:wait; }
   #messages_app .messages-message-state { padding-top:5px; color:#999; font:9px Arial,sans-serif; text-align:right; }
   #messages_app .messages-message-state--read { color:#1b93c2; }
   #messages_app .messages-compose { padding:12px; border-top:5px solid #f1f1f1; background:#fff; }
@@ -186,6 +192,34 @@ const messengerScript = `
 
     if (root.getAttribute("data-history") !== "1") window.setTimeout(scrollBottom, 0);
     applyReadThrough(root.getAttribute("data-read-through"));
+
+    root.addEventListener("submit", function (event) {
+      var callbackForm = event.target;
+      if (!callbackForm || !callbackForm.classList || !callbackForm.classList.contains("messages-bot-callback")) return;
+      if (!window.fetch || !window.FormData) return;
+      event.preventDefault();
+      var callbackButton = callbackForm.querySelector("button[type=submit]");
+      if (callbackButton) callbackButton.disabled = true;
+      fetch(callbackForm.action, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+        body: new FormData(callbackForm)
+      }).then(function (response) {
+        if (response.status === 401) {
+          window.location.href = "/login";
+          throw new Error("auth");
+        }
+        return response.json();
+      }).then(function (data) {
+        if (!data.ok) throw new Error(data.error || "Не удалось выполнить действие.");
+        if (data.text) window.alert(data.text);
+        window.setTimeout(function () { window.location.reload(); }, 150);
+      }).catch(function (error) {
+        if (error && error.message !== "auth") window.alert(error.message || "Не удалось выполнить действие.");
+        if (callbackButton) callbackButton.disabled = false;
+      });
+    });
 
     var form = document.getElementById("messages_compose");
     if (form) {
@@ -300,6 +334,16 @@ const messengerScript = `
         };
         events.addEventListener("message", poll);
         events.addEventListener("read", poll);
+        events.addEventListener("delete", function (event) {
+          try {
+            var data = JSON.parse(event.data || "{}");
+            var deleted = document.getElementById("message_" + data.messageId);
+            if (deleted && deleted.parentNode) deleted.parentNode.removeChild(deleted);
+          } catch (_) {}
+        });
+        events.addEventListener("edit", function () {
+          window.setTimeout(function () { window.location.reload(); }, 250);
+        });
         events.addEventListener("ready", poll);
         events.onerror = function () {
           realtimeOpen = false;
@@ -437,6 +481,30 @@ export const MessageItemView: FC<{ message: MessageListItem }> = ({ message }) =
       </div>
     ) : null}
     {message.body ? <div class="messages-message-body">{message.body}</div> : null}
+    {message.replyMarkup ? (
+      <div class="messages-bot-keyboard">
+        {message.replyMarkup.inline_keyboard.map((row, rowIndex) => (
+          <div class="messages-bot-keyboard-row" key={rowIndex}>
+            {row.map((button, buttonIndex) => button.url ? (
+              <a
+                class="messages-bot-button"
+                href={button.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                key={buttonIndex}
+              >{button.text}</a>
+            ) : (
+              <form class="messages-bot-callback" method="post" action="/messages/bot-callback" key={buttonIndex}>
+                <input type="hidden" name="scope" value={message.scope} />
+                <input type="hidden" name="message_id" value={message.id} />
+                <input type="hidden" name="callback_data" value={button.callback_data} />
+                <button class="messages-bot-button" type="submit">{button.text}</button>
+              </form>
+            ))}
+          </div>
+        ))}
+      </div>
+    ) : null}
     {message.own ? (
       <div class={`messages-message-state${message.readAt ? " messages-message-state--read" : ""}`}>
         {message.readAt ? "Прочитано" : "Отправлено"}

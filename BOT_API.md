@@ -60,7 +60,8 @@ POST /telegram-bot-api/bot<TOKEN>/sendMessage
 ```
 
 Ответ имеет Telegram-форму `{ "ok": true, "result": ... }`. Ошибка содержит `ok: false`,
-`error_code` и `description`.
+`error_code` и `description`. Параметры принимаются как JSON и как стандартный для Telegram
+Bot API `application/x-www-form-urlencoded`.
 
 ## Поддерживаемые методы
 
@@ -80,8 +81,9 @@ privacy mode сейчас отсутствует.
 ### `sendMessage`
 
 Отправляет обычный текст до 4000 Unicode-символов. Telegram entities принимаются и возвращаются,
-но Musorgram пока хранит и отображает только plain text. `parse_mode`, клавиатуры, эффекты,
-link preview settings и `reply_parameters` игнорируются.
+но Musorgram пока хранит и отображает только plain text. Inline-клавиатуры с HTTP(S)-ссылками и
+`callback_data` хранятся и отображаются. Эффекты, link preview settings и `reply_parameters`
+игнорируются.
 
 Бот не может первым начать личный диалог: пользователь должен сначала написать ему. В группу бот
 может отправлять сообщения только пока состоит в ней.
@@ -109,8 +111,18 @@ link preview settings и `reply_parameters` игнорируются.
 
 ### `deleteMessage`
 
-Временно отвечает `true` как безопасный no-op и пишет предупреждение в серверный лог. Сообщение
-не удаляется. Это сделано, чтобы старые боты не падали на необработанном Telegram error.
+Удаляет сообщение из личного диалога бота или из группы, в которой бот состоит. В группе бот может
+удалить любое сообщение — отдельной роли администратора для ботов в Musorgram пока нет.
+
+### Callback и управление группой
+
+Поддерживаются `answerCallbackQuery`, `editMessageReplyMarkup` и `getChatAdministrators`.
+Нажатие `callback_data` создаёт обычный `callback_query` в очереди `getUpdates`; ответ бота
+показывается пользователю. Единственным администратором, возвращаемым для группы, считается её
+владелец.
+
+`banChatMember` (и старый alias `kickChatMember`) отвечает `true` как совместимый no-op:
+участник не удаляется и не блокируется.
 
 ## Формат updates и идентификаторы
 
@@ -130,8 +142,8 @@ link preview settings и `reply_parameters` игнорируются.
 - `sendPhoto` как отдельный метод;
 - `getFile` и скачивание по `file_id`;
 - видео, аудио, документы и animation;
-- replies, редактирование и настоящее удаление;
-- inline query, callback query и клавиатуры;
+- replies и редактирование текста сообщений;
+- inline query;
 - Telegram topics/threads, business messages и paid media;
 - privacy mode и команды BotFather.
 

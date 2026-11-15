@@ -1,5 +1,5 @@
 export type MessageRealtimeEvent = {
-  type: "message" | "read";
+  type: "message" | "read" | "delete" | "edit";
   peerId?: number;
   groupId?: number;
   messageId?: number;

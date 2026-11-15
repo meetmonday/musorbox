@@ -4,8 +4,16 @@ import { config } from "../core/config";
 import { authenticateMessageBot } from "./service";
 import type { MessageBot } from "./service";
 import { getBotUpdates } from "./updates";
-import { BotMethodError, sendBotMediaGroup, sendBotMessage } from "./methods";
+import {
+  BotMethodError,
+  deleteBotMessage,
+  editBotMessageReplyMarkup,
+  getBotChatAdministrators,
+  sendBotMediaGroup,
+  sendBotMessage,
+} from "./methods";
 import { parseMediaGroupRequest } from "./media";
+import { answerBotCallback } from "./callbacks";
 
 type TelegramErrorCode = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500;
 
@@ -39,19 +47,33 @@ function botInfo(bot: MessageBot) {
 }
 
 async function requestObject(c: Context): Promise<Record<string, unknown>> {
-  if (!/^application\/json(?:\s*;|$)/i.test(c.req.header("Content-Type") ?? "")) return {};
-  try {
-    const value: unknown = await c.req.json();
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
+  const contentType = c.req.header("Content-Type") ?? "";
+  if (/^application\/json(?:\s*;|$)/i.test(contentType)) {
+    try {
+      const value: unknown = await c.req.json();
+      return value && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
   }
+  if (/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(contentType)) {
+    try {
+      const body = await c.req.parseBody();
+      return Object.fromEntries(Object.entries(body).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 function integerParam(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isSafeInteger(value) ? value : fallback;
+  const parsed = typeof value === "number" ? value
+    : typeof value === "string" && /^-?\d+$/.test(value) ? Number(value)
+      : NaN;
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
 }
 
 app.post("/telegram-bot-api/*", async (c) => {
@@ -161,12 +183,62 @@ app.post("/telegram-bot-api/*", async (c) => {
   }
 
   if (method === "deletemessage") {
+    try {
+      const params = await requestObject(c);
+      deleteBotMessage(bot, params);
+      log(
+        `#${requestId} deleteMessage: @${bot.username}, `
+        + `chatId=${String(params.chat_id ?? "?")}, messageId=${String(params.message_id ?? "?")}`,
+      );
+      return c.json({ ok: true, result: true });
+    } catch (error) {
+      if (error instanceof BotMethodError) return telegramError(c, error.status, error.message);
+      console.error(`[bot-api] #${requestId} deleteMessage: ошибка для @${bot.username}:`, error);
+      return telegramError(c, 500, "Internal Server Error");
+    }
+  }
+
+  if (method === "banchatmember" || method === "kickchatmember") {
     const params = await requestObject(c);
     console.warn(
-      `[bot-api] #${requestId} deleteMessage: @${bot.username}, `
-      + `chatId=${String(params.chat_id ?? "?")}, messageId=${String(params.message_id ?? "?")} — no-op`,
+      `[bot-api] #${requestId} ${rawMethod}: @${bot.username}, `
+      + `chatId=${String(params.chat_id ?? "?")}, userId=${String(params.user_id ?? "?")} — no-op`,
     );
     return c.json({ ok: true, result: true });
+  }
+
+  if (method === "editmessagereplymarkup") {
+    try {
+      const params = await requestObject(c);
+      const message = editBotMessageReplyMarkup(bot, params);
+      log(`#${requestId} editMessageReplyMarkup: @${bot.username}, messageId=${message.message_id}`);
+      return c.json({ ok: true, result: message });
+    } catch (error) {
+      if (error instanceof BotMethodError) return telegramError(c, error.status, error.message);
+      console.error(`[bot-api] #${requestId} editMessageReplyMarkup: ошибка для @${bot.username}:`, error);
+      return telegramError(c, 500, "Internal Server Error");
+    }
+  }
+
+  if (method === "answercallbackquery") {
+    const params = await requestObject(c);
+    const callbackQueryId = typeof params.callback_query_id === "string" ? params.callback_query_id : "";
+    if (!callbackQueryId) return telegramError(c, 400, "Bad Request: callback_query_id is required");
+    const text = typeof params.text === "string" ? params.text : "";
+    const showAlert = params.show_alert === true || params.show_alert === "true";
+    answerBotCallback(callbackQueryId, text, showAlert);
+    return c.json({ ok: true, result: true });
+  }
+
+  if (method === "getchatadministrators") {
+    try {
+      const params = await requestObject(c);
+      return c.json({ ok: true, result: getBotChatAdministrators(bot, params) });
+    } catch (error) {
+      if (error instanceof BotMethodError) return telegramError(c, error.status, error.message);
+      console.error(`[bot-api] #${requestId} getChatAdministrators: ошибка для @${bot.username}:`, error);
+      return telegramError(c, 500, "Internal Server Error");
+    }
   }
 
   console.warn(`[bot-api] #${requestId} @${bot.username}: метод ${rawMethod} пока не поддерживается`);
