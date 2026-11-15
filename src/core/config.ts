@@ -54,4 +54,8 @@ export const config = {
     /** Пауза между сообщениями боту, чтобы не поймать 429 (Telegram: ~20 сообщений в минуту в чат). */
     sendIntervalMs: Number(process.env.TG_SEND_INTERVAL_MS ?? 1200),
   },
+  botApi: {
+    /** Подробные логи каждого long-poll запроса; обычные логи намеренно менее шумные. */
+    debug: process.env.BOT_API_DEBUG === "1",
+  },
 };

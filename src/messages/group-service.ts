@@ -31,6 +31,7 @@ import {
   groupMessageImagesById,
 } from "./media";
 import type { ApiMessageImage, PreparedMessageImage } from "./media";
+import { deliverGroupMessageToBots } from "../bot-api/delivery";
 
 const MAX_GROUP_MEMBERS = 50;
 const SENDS_PER_MINUTE = 30;
@@ -454,6 +455,11 @@ export async function sendGroupMessage(
       groupId,
       messageId: inserted.message.id,
     });
+  }
+  try {
+    deliverGroupMessageToBots(groupId, { ...inserted.message, senderId });
+  } catch (error) {
+    console.error(`[bot-api] Не удалось поставить сообщение группы ${inserted.message.id} в очередь:`, error);
   }
   return {
     ok: true,

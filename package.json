@@ -11,6 +11,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "ap:wipe": "bun run scripts/ap_wipe.ts",
+    "bot:create": "bun run scripts/create_message_bot.ts",
+    "bot:rotate": "bun run scripts/create_message_bot.ts --rotate",
     "seed:structure": "bun run scripts/seed_structure.ts",
     "seed:full": "bun run src/core/seed.ts",
     "seed": "bun run src/core/seed.ts",

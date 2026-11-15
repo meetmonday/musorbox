@@ -120,6 +120,13 @@
       "when": 1794733652319,
       "tag": "0016_hard_layla_miller",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1794739846596,
+      "tag": "0017_salty_talon",
+      "breakpoints": true
     }
   ]
 }

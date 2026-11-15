@@ -21,6 +21,7 @@ import moderationRoutes from "./moderation/routes";
 import apiRoutes from "./api/routes";
 import apiSettingsRoutes from "./api/settings";
 import telegramRoutes from "./telegram/routes";
+import botApiRoutes from "./bot-api/routes";
 
 type AppEnv = {
   Variables: UserContext;
@@ -28,7 +29,20 @@ type AppEnv = {
 
 const app = new Hono<AppEnv>({ strict: false });
 
-app.use("*", logger());
+function redactRequestLog(message: string): string {
+  return message.replace(
+    /(\/telegram-bot-api\/bot)[^/\s?]+/g,
+    "$1<token>",
+  );
+}
+
+function printRequestLog(message: string): void {
+  const redacted = redactRequestLog(message);
+  if (!config.botApi.debug && /\/telegram-bot-api\/bot<token>\/getUpdates(?:\?|\s|$)/i.test(redacted)) return;
+  console.log(redacted);
+}
+
+app.use("*", logger(printRequestLog));
 app.use("*", sessionMiddleware);
 app.use("/css/*", serveStatic({ root: "./public" }));
 app.use("/images/*", serveStatic({ root: "./public" }));
@@ -42,6 +56,7 @@ app.route("/", activityPubRoutes);
 app.route("/", apiRoutes);
 app.route("/", apiSettingsRoutes);
 app.route("/", telegramRoutes);
+app.route("/", botApiRoutes);
 app.route("/", topicsRoutes);
 app.route("/", authRoutes);
 app.route("/", forumRoutes);
@@ -57,6 +72,10 @@ app.all("*", (c) => c.text("Not found", 404));
 
 getDb();
 console.log(`[musorbox] DB initialized at ${config.dbPath}`);
+console.log(
+  `[bot-api] endpoint ${config.baseUrl}/telegram-bot-api/bot<TOKEN>; `
+  + `подробный long polling: ${config.botApi.debug ? "включён" : "выключен (BOT_API_DEBUG=1)"}`,
+);
 
 if (config.adminUsernames.length > 0) {
   const promoted = getDrizzle()

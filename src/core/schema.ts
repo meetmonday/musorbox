@@ -71,6 +71,33 @@ export const appTokens = sqliteTable(
   ],
 );
 
+/** Отдельные учётные данные Telegram Bot API-совместимых ботов Musorgram. */
+export const messageBots = sqliteTable(
+  "message_bots",
+  {
+    userId: integer("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("message_bots_token_hash_idx").on(t.tokenHash)],
+);
+
+/** Долговременная очередь getUpdates. Payload не содержит update_id: им служит id строки. */
+export const messageBotUpdates = sqliteTable(
+  "message_bot_updates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    botUserId: integer("bot_user_id")
+      .notNull()
+      .references(() => messageBots.userId, { onDelete: "cascade" }),
+    payload: text("payload").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [index("message_bot_updates_bot_id_idx").on(t.botUserId, t.id)],
+);
+
 export const categories = sqliteTable(
   "categories",
   {

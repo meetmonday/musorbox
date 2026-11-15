@@ -28,6 +28,7 @@ import {
   privateMessageImagesById,
 } from "./media";
 import type { ApiMessageImage, PreparedMessageImage } from "./media";
+import { deliverPrivateMessageToBot } from "../bot-api/delivery";
 
 export const MESSAGE_MAX_LENGTH = 4000;
 const SENDS_PER_MINUTE = 30;
@@ -523,6 +524,11 @@ export async function sendPrivateMessage(
     peerId: senderId,
     messageId: inserted.message.id,
   });
+  try {
+    deliverPrivateMessageToBot(inserted.message);
+  } catch (error) {
+    console.error(`[bot-api] Не удалось поставить личное сообщение ${inserted.message.id} в очередь:`, error);
+  }
 
   return {
     ok: true,
